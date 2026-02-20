@@ -21,7 +21,27 @@ This repository is a **solution accelerator** that helps you deploy and operate 
 - Usage ingestion components (Logic Apps + Azure Functions)
 - Validation notebooks and operational guides
 
-## 🌟 Benefits (Summary)
+## � Part of the Foundry Citadel Platform
+
+> [!IMPORTANT]
+> This accelerator is the **reference implementation of Layer 1 – Governance Hub** in the [Foundry Citadel Platform](https://aka.ms/foundry-citadel) layered security architecture.
+
+The **Foundry Citadel Platform** is a unified, layered approach to AI security and compliance, designed to enable enterprises to scale AI innovation while maintaining trust, security, and regulatory alignment. The platform is composed of four interlocking layers:
+
+| Layer | Name | Responsibility | Implementation |
+|-------|------|----------------|----------------|
+| 🔷 **Layer 1** | **Governance Hub** | Runtime enforcement — unified AI gateway, policy-as-code, identity validation, token rate limiting, content filtering, cost attribution | **👉 This Accelerator** ([aka.ms/ai-hub-gateway](https://aka.ms/ai-hub-gateway)) |
+| 🔶 **Layer 2** | **AI Control Plane** | Observability & compliance — agent traces, AI evaluations, fleet operations, automated compliance checks | [Microsoft Foundry Control Plane](https://learn.microsoft.com/en-us/azure/ai-foundry/control-plane/overview) |
+| 🟢 **Layer 3** | **Agent Identity (Agent 365)** | Agent identity & lifecycle — unique agent identities, shadow agent detection, sponsorship model, access packages | [Governing Agent Identities with Entra ID](https://learn.microsoft.com/en-us/entra/id-governance/agent-id-governance-overview) |
+| 🛡️ **Layer 4** | **Security Fabric** | Unified protection — Microsoft Defender threat intelligence, Purview data governance, Entra access control | Microsoft Defender, Purview & Entra |
+
+The layers are not isolated silos — they form an integrated architecture grounded in the principle of **separation of concerns with unified oversight**. Layer 1 (this accelerator) acts as the physical gateway through a hub-and-spoke deployment where a centrally managed AI gateway (Azure API Management) enforces runtime policies, while spoke environments give each business unit autonomous development within guardrails.
+
+> 📎 For the full Citadel Platform architecture and guidance, visit: [aka.ms/foundry-citadel](https://aka.ms/foundry-citadel)
+
+---
+
+## �🌟 Benefits (Summary)
 
 Citadel Governance Hub helps you standardize AI governance while maintaining developer velocity:
 
