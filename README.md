@@ -38,8 +38,7 @@ For a detailed stakeholder- and capability-level breakdown, see [Governance Hub 
 At a high level, the accelerator includes:
 
 - [bicep/infra](./bicep/infra): main IaC entrypoint and modules for provisioning the hub.
-- [src/usage-ingestion-logicapp](./src/usage-ingestion-logicapp): Logic App workflows for processing usage/log streams.
-- [src/usage-ingestion-function](./src/usage-ingestion-function): .NET Azure Function(s) supporting ingestion and processing.
+- [src/usage-ingestion-logicapp](./src/usage-ingestion-logicapp): Logic App workflows for processing usage/log streams and other governance workflows.
 - [validation](./validation): Jupyter notebooks for post-deployment validation and onboarding.
 - [guides](./guides): operational and architecture documentation.
 
@@ -136,7 +135,7 @@ Leverage **Citadel Access Contracts** to declare the required access to LLMs, to
 
 #### New agents
 
-Building new agents is accelerated through the **Citadel Agent Spoke** landing zone guidance, which provides isolated, secure environments designed specifically for AI agent development and deployment. Each spoke serves a single business unit or major use case, ensuring clear boundaries, simplified management, and integration with the Citadel Governance Hub for centralized governance.
+Building new agents is accelerated through the **Citadel Agent Environment** landing zone guidance, which provides isolated, secure environments designed specifically for AI agent development and deployment. Each spoke serves a single business unit or major use case, ensuring clear boundaries, simplified management, and integration with the Citadel Governance Hub for centralized governance.
 
 For detailed guidance, see [AI App Landing Zone Repo](https://github.com/Azure/AI-Landing-Zones).
 
@@ -144,13 +143,13 @@ For detailed guidance, see [AI App Landing Zone Repo](https://github.com/Azure/A
 - **One spoke per business unit or use case** - Dedicated environments for insurance claims processing, customer support automation, or other agentic scenarios
 - **Flexible runtime options** - Choose between Microsoft Foundry Agents (fully managed runtime) or Azure Container Apps (bring-your-own-agent)
 - **Pre-configured infrastructure** - Automated deployment via Bicep or Terraform with all networking, security, and monitoring built-in
-- **Hub integration** - Seamless connection to Citadel Governance Hub through Citadel Access & Publish Contracts
+- **Hub integration** - Seamless connection to Citadel Governance Hub through **Citadel Access Contracts**
 
 **Deployment Patterns:**
 - **Greenfield (Standalone with New Resources)** - Creates all infrastructure from scratch with new VNet and Log Analytics workspace
 - **Brownfield (Standalone with Existing Resources)** - Integrates with existing enterprise landing zones, reusing VNets and centralized monitoring
 
-> **Note:** Citadel Agent Spoke deployment supports the AI development velocity pillar and is designed to work in conjunction with Citadel Governance Hub. Multiple spokes can connect to a single hub for unified governance and observability.
+> **Note:** Citadel Agent Environment deployment supports the AI development velocity pillar and is designed to work in conjunction with Citadel Governance Hub. Multiple environments can connect to a single hub for unified governance and observability.
 
 ---
 
@@ -162,7 +161,7 @@ Citadel Governance Hub seamlessly integrates with **Citadel compliant Agents** e
 Declares the governed dependencies an agent needs—LLMs, AI services, tools, and reusable agents—along with precise access policies:
 - Model selection and capacity allocation
 - Regional preferences and compliance requirements
-- Safety and security guardrails
+- Safety and security guardrails (content safety, PII handling, OAuth scopes,...)
 - Usage quotas and cost limits
 
 ### 📤 **AI Publish Contract**
