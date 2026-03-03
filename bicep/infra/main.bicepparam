@@ -223,6 +223,15 @@ param aiFoundryModelsConfig = [
     aiserviceIndex: 0
   }
   {
+    name: 'gpt-4.1'
+    publisher: 'OpenAI'
+    version: '2025-04-14'
+    sku: 'GlobalStandard'
+    capacity: 100
+    retirementDate: '2026-10-14'
+    aiserviceIndex: 0
+  }
+  {
     name: 'DeepSeek-R1'
     publisher: 'DeepSeek'
     version: '1'
