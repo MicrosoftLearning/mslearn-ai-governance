@@ -88,15 +88,6 @@ Run the deployment scoped to the resource group containing the APIM instance:
 
 ```bash
 az deployment group create \
-  --resource-group <your-resource-group> \
-  --template-file main.bicep \
-  --parameters main.bicepparam
-```
-
-Or using a named deployment:
-
-```bash
-az deployment group create \
   --name gateway-upgrade-$(date +%Y%m%d%H%M) \
   --resource-group <your-resource-group> \
   --template-file main.bicep \
