@@ -212,6 +212,30 @@ if ([string]::IsNullOrWhiteSpace($appId)) {
     exit 1
 }
 
+# ── 1b. Set Application ID URI ──
+Write-Host "[1b/6] Configuring Application ID URI..." -ForegroundColor Yellow
+$identifierUri = "api://$appId"
+
+# Check current identifierUris
+$currentApp = az rest --method GET --uri "https://graph.microsoft.com/v1.0/applications/$appObjectId" --query "identifierUris" --output json 2>$null | ConvertFrom-Json
+if (-not $currentApp -or $currentApp.Count -eq 0 -or $currentApp -notcontains $identifierUri) {
+    $uriPayload = @{ identifierUris = @($identifierUri) }
+    $uriTempFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $uriPayload | ConvertTo-Json -Depth 5 | Set-Content -Path $uriTempFile -Encoding UTF8
+        az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$appObjectId" --headers "Content-Type=application/json" --body "@$uriTempFile" --output none
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to set Application ID URI: $identifierUri"
+            exit 1
+        }
+        Write-Host "  Set Application ID URI: $identifierUri" -ForegroundColor Green
+    } finally {
+        Remove-Item -Path $uriTempFile -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host "  Application ID URI already configured: $identifierUri" -ForegroundColor Green
+}
+
 # ── 2. Ensure Service Principal exists ──
 Write-Host "[2/6] Ensuring service principal exists..." -ForegroundColor Yellow
 $spCheck = az ad sp list --filter "appId eq '$appId'" --output json 2>$null | ConvertFrom-Json
@@ -235,9 +259,24 @@ Write-Host "  Client secret generated" -ForegroundColor Green
 
 # ── 4. Store in Key Vault ──
 Write-Host "[4/6] Storing client secret in Key Vault..." -ForegroundColor Yellow
-$secretValue = ConvertTo-SecureString -String $clientSecret -AsPlainText -Force
-az keyvault secret set --vault-name $KeyVaultName --name "ENTRA-APP-CLIENT-SECRET" --value $clientSecret --output none 2>$null
-Write-Host "  Stored as ENTRA-APP-CLIENT-SECRET" -ForegroundColor Green
+$kvResult = az keyvault secret set --vault-name $KeyVaultName --name "ENTRA-APP-CLIENT-SECRET" --value $clientSecret --output json 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "" -ForegroundColor Red
+    Write-Host "  Failed to store secret in Key Vault '$KeyVaultName'." -ForegroundColor Red
+    Write-Host "  Error: $kvResult" -ForegroundColor Red
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "  Possible causes:" -ForegroundColor Yellow
+    Write-Host "    - You don't have 'Key Vault Secrets Officer' role on the Key Vault" -ForegroundColor Yellow
+    Write-Host "    - The Key Vault has a firewall blocking access from your IP" -ForegroundColor Yellow
+    Write-Host "    - The Key Vault name '$KeyVaultName' is incorrect" -ForegroundColor Yellow
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "  To grant yourself access, run:" -ForegroundColor Cyan
+    Write-Host "    az role assignment create --role `"Key Vault Secrets Officer`" --assignee `"$($account.user.name)`" --scope (az keyvault show --name $KeyVaultName --query id --output tsv)" -ForegroundColor Cyan
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "  Continuing without Key Vault storage. The secret is still stored in azd environment." -ForegroundColor Yellow
+} else {
+    Write-Host "  Stored as ENTRA-APP-CLIENT-SECRET" -ForegroundColor Green
+}
 
 # ── 5. Configure APIM JWT Named Values ──
 Write-Host "[5/6] Configuring APIM JWT named values..." -ForegroundColor Yellow
@@ -289,6 +328,7 @@ Write-Host "══════════════════════�
 Write-Host "  App Display Name:     $AppDisplayName" -ForegroundColor Gray
 Write-Host "  Client ID:            $appId" -ForegroundColor Gray
 Write-Host "  Tenant ID:            $tenantId" -ForegroundColor Gray
+Write-Host "  App ID URI:           api://$appId" -ForegroundColor Gray
 Write-Host "  Audience:             api://$appId" -ForegroundColor Gray
 Write-Host "  KV Secret:            ENTRA-APP-CLIENT-SECRET" -ForegroundColor Gray
 Write-Host "  APIM Named Values:    JWT-TenantId, JWT-AppRegistrationId," -ForegroundColor Gray

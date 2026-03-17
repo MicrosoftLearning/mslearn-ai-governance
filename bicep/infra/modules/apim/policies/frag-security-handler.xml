@@ -1,23 +1,32 @@
 <fragment>
     <!--
-        Fragment: Security Handler
-        Purpose: Provides authentication supporting both API key and JWT Bearer token methods
-                 with Microsoft Entra ID integration and managed identity backend authentication.
-                 Supports layered auth: API Key is always required, JWT is optionally enforced
-                 per-product via the 'jwtRequired' context variable.
+        Fragment: Security Handler (Unified)
+        Purpose: Provides unified authentication across all AI Hub Gateway API endpoints
+                 (Azure OpenAI API, Universal LLM API, Unified AI API).
+                 Supports layered auth: API Key is always required (APIM subscription validation),
+                 JWT is optionally enforced per-product via the 'jwtRequired' context variable.
+                 
+                 Compatible with any OAuth 2.0 / OpenID Connect identity provider
+                 (Microsoft Entra ID, Auth0, Okta, etc.) via configurable APIM named values.
 
         Input Variables:
         - api-key header: API key for subscription-based authentication
         - Authorization header: Bearer token for JWT authentication
         - jwtRequired (optional): Set by product policy to "true" to require JWT in addition to API key
+        - jwtAudience (optional): Custom audience override. Falls back to {{JWT-AppRegistrationId}} named value
+        - jwtIssuer (optional): Custom issuer override. Falls back to {{JWT-Issuer}} named value
+        - jwtOpenIdConfigUrl (optional): Custom OpenID config URL override. Falls back to {{JWT-OpenIdConfigUrl}} named value
 
         Output Variables:
         - auth-type: String - Authentication type ("api-key", "jwt", "api-key-jwt", "none")
         - subscription-name: String - Subscription name or JWT username
         - user-id: String - User identifier from JWT claim or subscription name
 
-        Upstream Dependencies:
-        - APIM named values: JWT-Issuer, JWT-OpenIdConfigUrl, JWT-AppRegistrationId (when JWT enabled)
+        Upstream Dependencies (required only when JWT is enabled and no custom overrides are set):
+        - APIM named values:
+          - JWT-OpenIdConfigUrl: OpenID Connect discovery endpoint (e.g., https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration)
+          - JWT-Issuer: Expected token issuer (e.g., https://login.microsoftonline.com/{tenant}/v2.0)
+          - JWT-AppRegistrationId: Expected audience claim (e.g., api://{client-id})
     -->
 
     <!-- Determine authentication method used in request -->
@@ -59,6 +68,12 @@
     <!-- Set default user-id from subscription -->
     <set-variable name="user-id" value="@(context.Subscription?.Name ?? "anonymous")" />
 
+    <!-- Pre-load APIM named values as fallback defaults for JWT settings -->
+    <!-- Product policies can override these by setting jwtAudience, jwtIssuer, jwtOpenIdConfigUrl -->
+    <set-variable name="_nv-jwt-audience" value="{{JWT-AppRegistrationId}}" />
+    <set-variable name="_nv-jwt-openid-config" value="{{JWT-OpenIdConfigUrl}}" />
+    <set-variable name="_nv-jwt-issuer" value="{{JWT-Issuer}}" />
+
     <!-- JWT validation (when jwtRequired is set to "true" by product policy OR when JWT is provided) -->
     <choose>
         <when condition="@{
@@ -96,9 +111,19 @@
                 </when>
                 <otherwise>
                     <!-- JWT token is present, validate it -->
-                    <set-variable name="jwt-audience" value="{{JWT-AppRegistrationId}}" />
-                    <set-variable name="jwt-openid-config" value="{{JWT-OpenIdConfigUrl}}" />
-                    <set-variable name="jwt-issuer" value="{{JWT-Issuer}}" />
+                    <!-- Resolve JWT settings: use product-level overrides if set, otherwise fall back to APIM named values -->
+                    <set-variable name="jwt-audience" value="@{
+                        var custom = context.Variables.GetValueOrDefault<string>("jwtAudience", "");
+                        return !string.IsNullOrEmpty(custom) ? custom : context.Variables.GetValueOrDefault<string>("_nv-jwt-audience", "");
+                    }" />
+                    <set-variable name="jwt-openid-config" value="@{
+                        var custom = context.Variables.GetValueOrDefault<string>("jwtOpenIdConfigUrl", "");
+                        return !string.IsNullOrEmpty(custom) ? custom : context.Variables.GetValueOrDefault<string>("_nv-jwt-openid-config", "");
+                    }" />
+                    <set-variable name="jwt-issuer" value="@{
+                        var custom = context.Variables.GetValueOrDefault<string>("jwtIssuer", "");
+                        return !string.IsNullOrEmpty(custom) ? custom : context.Variables.GetValueOrDefault<string>("_nv-jwt-issuer", "");
+                    }" />
 
                     <!-- Verify JWT settings are configured -->
                     <choose>

@@ -467,16 +467,16 @@ module apiUnifiedAI './unified-ai-api.bicep' = if (enableUnifiedAiApi) {
 
 ////// JWT Authentication Named Values /////////////
 // These named values support JWT authentication across all APIs (Azure OpenAI,
-// Universal LLM, and Unified AI). They are created when enableJwtAuth is true,
-// enabling access contracts to require JWT validation via the security-handler fragment.
+// Universal LLM, and Unified AI). The security-handler fragment is included in all
+// API policies and references these named values via {{...}} syntax.
+// When enableJwtAuth is false, placeholders are used so deployment passes.
+// JWT enforcement is controlled per-product via the 'jwtRequired' context variable
+// set in each Access Contract's product policy.
 
 var jwtTenantIdValue = !empty(jwtTenantId) ? jwtTenantId : subscription().tenantId
 var jwtAppRegIdValue = !empty(jwtAppRegistrationId) ? jwtAppRegistrationId : 'not-configured'
 
-// JWT named values are created when either JWT auth or Unified AI API is enabled.
-// The security-handler fragment references them via {{...}} syntax; placeholders
-// are used when JWT is disabled so deployment validation passes.
-resource jwtTenantIdNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = if (enableJwtAuth || enableUnifiedAiApi) {
+resource jwtTenantIdNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
   name: 'JWT-TenantId'
   parent: apimService
   properties: {
@@ -485,7 +485,7 @@ resource jwtTenantIdNamedValue 'Microsoft.ApiManagement/service/namedValues@2024
   }
 }
 
-resource jwtAppRegistrationIdNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = if (enableJwtAuth || enableUnifiedAiApi) {
+resource jwtAppRegistrationIdNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
   name: 'JWT-AppRegistrationId'
   parent: apimService
   properties: {
@@ -494,7 +494,7 @@ resource jwtAppRegistrationIdNamedValue 'Microsoft.ApiManagement/service/namedVa
   }
 }
 
-resource jwtIssuerNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = if (enableJwtAuth || enableUnifiedAiApi) {
+resource jwtIssuerNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
   name: 'JWT-Issuer'
   parent: apimService
   properties: {
@@ -503,7 +503,7 @@ resource jwtIssuerNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-0
   }
 }
 
-resource jwtOpenIdConfigUrlNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = if (enableJwtAuth || enableUnifiedAiApi) {
+resource jwtOpenIdConfigUrlNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
   name: 'JWT-OpenIdConfigUrl'
   parent: apimService
   properties: {
@@ -708,7 +708,6 @@ module policyFragments './policy-fragments.bicep' = {
     enablePIIAnonymization: enablePIIAnonymization
     enableAIModelInference: enableAIModelInference
     enableUnifiedAiApi: enableUnifiedAiApi
-    enableJwtAuth: enableJwtAuth
   }
   dependsOn: [
     apiopenAiApiClientNamedValue

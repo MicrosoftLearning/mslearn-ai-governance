@@ -216,14 +216,22 @@ Content safety can be enforced at a gateway level using the built-in content saf
 
 JWT (JSON Web Token) authentication adds a second security layer on top of subscription API keys. When enabled for a product, clients must provide both an `api-key` header and an `Authorization: Bearer {token}` header.
 
-JWT validation is handled by the `security-handler` policy fragment, which is deployed when `entraAuth=true` in the gateway configuration. The fragment validates tokens against Microsoft Entra ID using APIM named values.
+JWT validation is handled by the unified `security-handler` policy fragment, which is included in **all three API endpoints** (Azure OpenAI API, Universal LLM API, and Unified AI API). The fragment validates tokens against any OAuth 2.0 / OpenID Connect identity provider configured via APIM named values (Microsoft Entra ID, Auth0, Okta, etc.).
 
 **Prerequisites:**
-- Citadel Governance Hub deployed with `entraAuth=true`
 - APIM named values configured: `JWT-TenantId`, `JWT-AppRegistrationId`, `JWT-Issuer`, `JWT-OpenIdConfigUrl`
-- Entra ID App Registration created (auto-provisioned or manual)
+- For Microsoft Entra ID: Run the `bicep/infra/entra-id-setup` module to auto-provision app registration and named values
+- For other identity providers: Manually configure the APIM named values with the appropriate OpenID Connect discovery endpoint, audience, and issuer
 
-**Basic Usage - Enable JWT for a Product:**
+**APIM Named Values for JWT Configuration:**
+
+| Named Value | Description | Example (Entra ID) | Example (Auth0) |
+|-------------|-------------|---------------------|-----------------|
+| `JWT-OpenIdConfigUrl` | OpenID Connect discovery endpoint | `https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration` | `https://{domain}/.well-known/openid-configuration` |
+| `JWT-Issuer` | Expected token issuer | `https://login.microsoftonline.com/{tenant}/v2.0` | `https://{domain}/` |
+| `JWT-AppRegistrationId` | Expected audience claim | `api://{client-id}` | `https://your-api-identifier` |
+
+**Basic Usage - Enable JWT with Gateway Defaults:**
 
 ```xml
 <inbound>
@@ -235,9 +243,46 @@ JWT validation is handled by the `security-handler` policy fragment, which is de
 </inbound>
 ```
 
+**Advanced Usage - Enable JWT with Custom Identity Provider:**
+
+Access contracts can override the gateway's default JWT settings by setting custom variables. The `security-handler` checks for these overrides first, then falls back to the APIM named values if not set.
+
+| Variable | Description | Falls back to Named Value |
+|----------|-------------|---------------------------|
+| `jwtAudience` | Custom audience claim to validate | `JWT-AppRegistrationId` |
+| `jwtIssuer` | Custom token issuer to validate | `JWT-Issuer` |
+| `jwtOpenIdConfigUrl` | Custom OpenID Connect discovery URL | `JWT-OpenIdConfigUrl` |
+
+```xml
+<inbound>
+    <base />
+    <!-- Enable JWT requirement -->
+    <set-variable name="jwtRequired" value="true" />
+    
+    <!-- Override JWT settings for a different identity provider (e.g., Auth0, Okta, separate Entra tenant) -->
+    <set-variable name="jwtAudience" value="https://my-custom-api-audience" />
+    <set-variable name="jwtIssuer" value="https://my-idp.example.com/" />
+    <set-variable name="jwtOpenIdConfigUrl" value="https://my-idp.example.com/.well-known/openid-configuration" />
+    
+    <!-- Other policies (model access, capacity, etc.) -->
+</inbound>
+```
+
+You can override any combination of settings — unset variables fall back to the gateway defaults:
+
+```xml
+<inbound>
+    <base />
+    <set-variable name="jwtRequired" value="true" />
+    
+    <!-- Only override audience (issuer and OpenID config use gateway defaults) -->
+    <set-variable name="jwtAudience" value="api://custom-audience-for-this-product" />
+</inbound>
+```
+
 **How It Works:**
 
-1. The `security-handler` fragment (included via `<base />` from the API-level policy) detects the authentication method:
+1. The `security-handler` fragment (included in the API-level policy via `<base />`) detects the authentication method:
    - `api-key` — only subscription key provided
    - `jwt` — only Bearer token provided
    - `api-key-jwt` — both provided
@@ -246,11 +291,14 @@ JWT validation is handled by the `security-handler` policy fragment, which is de
 2. API key is always validated first (APIM subscription validation)
 
 3. If `jwtRequired` is `"true"` (set by product policy), JWT validation is enforced:
-   - Token is validated against the Entra ID OpenID configuration endpoint
+   - Token is validated against the OpenID Connect configuration endpoint
    - Audience, issuer, and signature are verified
    - User identity is extracted from the `azp` claim (client credentials flow)
+   - Custom overrides (`jwtAudience`, `jwtIssuer`, `jwtOpenIdConfigUrl`) are used if set, otherwise APIM named values apply
 
 4. If a Bearer token is provided but `jwtRequired` is not set, the token is still validated (opportunistic validation)
+
+5. This behavior is **uniform across all three API endpoints** — the same `security-handler` fragment executes regardless of whether the request arrives via Azure OpenAI, Universal LLM, or Unified AI API
 
 **Output Variables Set by Security Handler:**
 
@@ -269,7 +317,7 @@ JWT validation is handled by the `security-handler` policy fragment, which is de
 | Invalid JWT token | 401 | — | Access denied due to invalid or expired JWT bearer token. |
 | JWT config missing | 503 | `jwt_not_configured` | JWT authentication is not configured properly on the gateway. |
 
-**Token Acquisition (Client Credentials Flow):**
+**Token Acquisition (Client Credentials Flow - Entra ID):**
 
 ```http
 POST https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token
@@ -322,7 +370,7 @@ JWT authentication works alongside all other access contract policies. A recomme
 </inbound>
 ```
 
-> **NOTE:** The `jwtRequired` variable must be set before `<base />` returns from execution or within the product policy inbound section. The `security-handler` fragment reads this variable during API-level policy execution.
+> **NOTE:** The `jwtRequired` variable must be set within the product policy inbound section (before or after `<base />`). The `security-handler` fragment reads this variable during API-level policy execution.
 
 ### PII Handling Policy
 

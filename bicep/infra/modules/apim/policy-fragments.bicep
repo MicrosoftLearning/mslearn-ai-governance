@@ -20,9 +20,6 @@ param enableAIModelInference bool = true
 @description('Enable Unified AI API features')
 param enableUnifiedAiApi bool = true
 
-@description('Enable JWT authentication support (deploys security-handler fragment)')
-param enableJwtAuth bool = false
-
 // ------------------
 //    RESOURCES
 // ------------------
@@ -164,11 +161,11 @@ resource pathBuilderFragment 'Microsoft.ApiManagement/service/policyFragments@20
   }
 }
 
-resource securityHandlerFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = if (enableJwtAuth || enableUnifiedAiApi) {
+resource securityHandlerFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
   parent: apimService
   name: 'security-handler'
   properties: {
-    description: 'Handles API Key and optional JWT authentication across all APIs'
+    description: 'Unified authentication handler for all AI Gateway APIs (API Key + optional JWT per-product)'
     value: loadTextContent('./policies/frag-security-handler.xml')
     format: 'rawxml'
   }

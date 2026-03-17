@@ -11,6 +11,7 @@ This is a **standalone operation** — no redeployment of the main landing zone 
 | Resource | Description |
 |----------|-------------|
 | **Entra ID App Registration** | App with OAuth2 scope (`access_as_user`), app role (`Task.ReadWrite`), sign-in audience `AzureADMyOrg` |
+| **Application ID URI** | Set to `api://{appId}` — used as the JWT audience for token validation |
 | **Service Principal** | Service principal for the app registration |
 | **Client Secret** | 2-year client secret stored in Key Vault as `ENTRA-APP-CLIENT-SECRET` |
 | **APIM Named Value: JWT-TenantId** | Entra ID tenant ID for JWT validation |
@@ -96,8 +97,8 @@ sequenceDiagram
 
 The setup script configures APIM directly — **no redeployment is needed**. After running the script:
 
-1. **APIM named values** are live and used by the `security-handler` policy fragment
-2. **Access contracts** can set `jwtAuth.enabled: true` to enforce JWT per product
+1. **APIM named values** are live and used by the unified `security-handler` policy fragment across all three API endpoints (Azure OpenAI API, Universal LLM API, Unified AI API)
+2. **Access contracts** can set `jwtRequired: true` in their product policy to enforce JWT per product
 3. **azd env vars** are stored for future `azd up` runs (values flow through `main.bicepparam`)
 
 ### Subsequent `azd up` Runs
@@ -155,4 +156,4 @@ Ensure you have `Key Vault Secrets Officer` role on the Key Vault. The main depl
 - [Full Deployment Guide](../../../guides/full-deployment-guide.md) — Complete deployment instructions
 - [Entra ID Authentication Guide](../../../guides/entraid-auth-validation.md) — JWT validation configuration
 - [Access Contracts](../citadel-access-contracts/README.md) — Per-product JWT enforcement
-- [JWT Validation Notebook](../../../test/citadel-jwt-access-contract-tests.ipynb) — End-to-end JWT testing
+- [JWT Authentication Validation Notebook](../../../validation/citadel-jwt-authentication-tests.ipynb) — End-to-end JWT testing across all 3 API endpoints
