@@ -138,11 +138,74 @@ Write-Host ""
 Write-Host "[1/6] Checking for existing app registration..." -ForegroundColor Yellow
 $existingApp = az ad app list --display-name $AppDisplayName --output json 2>$null | ConvertFrom-Json
 
+# Define the canonical set of app roles for the gateway
+$gatewayAppRoles = @(
+    @{
+        allowedMemberTypes = @("User", "Application")
+        description        = "Full read and write access to all gateway capabilities"
+        displayName        = "ReadWrite"
+        isEnabled          = $true
+        id                 = "00000000-0000-0000-0000-000000000002"
+        value              = "Task.ReadWrite"
+    }
+    @{
+        allowedMemberTypes = @("User", "Application")
+        description        = "Access to LLM model endpoints (chat completions, embeddings)"
+        displayName        = "Models.Read"
+        isEnabled          = $true
+        id                 = "00000000-0000-0000-0000-000000000003"
+        value              = "Models.Read"
+    }
+    @{
+        allowedMemberTypes = @("User", "Application")
+        description        = "Access to MCP tool endpoints"
+        displayName        = "MCP.Read"
+        isEnabled          = $true
+        id                 = "00000000-0000-0000-0000-000000000004"
+        value              = "MCP.Read"
+    }
+    @{
+        allowedMemberTypes = @("User", "Application")
+        description        = "Access to agent endpoints"
+        displayName        = "Agent.Read"
+        isEnabled          = $true
+        id                 = "00000000-0000-0000-0000-000000000005"
+        value              = "Agent.Read"
+    }
+)
+
 if ($existingApp -and $existingApp.Count -gt 0) {
     $app = $existingApp[0]
     $appId = $app.appId
     $appObjectId = $app.id
     Write-Host "  Found existing: $appId" -ForegroundColor Green
+
+    # ── 1a. Ensure app roles are up-to-date on existing registration ──
+    Write-Host "  Checking app roles..." -ForegroundColor Yellow
+    $currentRoleIds = @()
+    if ($app.appRoles) {
+        $currentRoleIds = $app.appRoles | ForEach-Object { $_.id }
+    }
+    $missingRoles = $gatewayAppRoles | Where-Object { $_.id -notin $currentRoleIds }
+    if ($missingRoles.Count -gt 0) {
+        Write-Host "  Adding $($missingRoles.Count) missing app role(s)..." -ForegroundColor Yellow
+        $updatedRoles = @($app.appRoles) + @($missingRoles)
+        $patchPayload = @{ appRoles = $updatedRoles }
+        $patchTempFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $patchPayload | ConvertTo-Json -Depth 10 | Set-Content -Path $patchTempFile -Encoding UTF8
+            az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$appObjectId" --headers "Content-Type=application/json" --body "@$patchTempFile" --output none
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Warning: Failed to update app roles. Continuing..." -ForegroundColor Yellow
+            } else {
+                Write-Host "  App roles updated successfully" -ForegroundColor Green
+            }
+        } finally {
+            Remove-Item -Path $patchTempFile -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        Write-Host "  App roles are up-to-date" -ForegroundColor Green
+    }
 } else {
     Write-Host "  Creating new app registration..." -ForegroundColor Yellow
 
@@ -150,6 +213,7 @@ if ($existingApp -and $existingApp.Count -gt 0) {
     $appPayload = @{
         displayName = $AppDisplayName
         signInAudience = "AzureADMyOrg"
+        isFallbackPublicClient = $true
         api = @{
             requestedAccessTokenVersion = 2
             oauth2PermissionScopes = @(
@@ -168,11 +232,35 @@ if ($existingApp -and $existingApp.Count -gt 0) {
         appRoles = @(
             @{
                 allowedMemberTypes = @("User", "Application")
-                description        = "ReadWrite roles have read and write access to the application data"
+                description        = "Full read and write access to all gateway capabilities"
                 displayName        = "ReadWrite"
                 isEnabled          = $true
                 id                 = "00000000-0000-0000-0000-000000000002"
                 value              = "Task.ReadWrite"
+            }
+            @{
+                allowedMemberTypes = @("User", "Application")
+                description        = "Access to LLM model endpoints (chat completions, embeddings)"
+                displayName        = "Models.Read"
+                isEnabled          = $true
+                id                 = "00000000-0000-0000-0000-000000000003"
+                value              = "Models.Read"
+            }
+            @{
+                allowedMemberTypes = @("User", "Application")
+                description        = "Access to MCP tool endpoints"
+                displayName        = "MCP.Read"
+                isEnabled          = $true
+                id                 = "00000000-0000-0000-0000-000000000004"
+                value              = "MCP.Read"
+            }
+            @{
+                allowedMemberTypes = @("User", "Application")
+                description        = "Access to agent endpoints"
+                displayName        = "Agent.Read"
+                isEnabled          = $true
+                id                 = "00000000-0000-0000-0000-000000000005"
+                value              = "Agent.Read"
             }
         )
         requiredResourceAccess = @(

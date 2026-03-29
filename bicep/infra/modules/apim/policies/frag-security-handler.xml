@@ -16,11 +16,14 @@
         - jwtAudience (optional): Custom audience override. Falls back to {{JWT-AppRegistrationId}} named value
         - jwtIssuer (optional): Custom issuer override. Falls back to {{JWT-Issuer}} named value
         - jwtOpenIdConfigUrl (optional): Custom OpenID config URL override. Falls back to {{JWT-OpenIdConfigUrl}} named value
+        - requiredRoles (optional): Set by product policy. Comma-separated list of required app roles (e.g., "Models.Read,Agent.Read").
+                                    If set, at least one role must be present in the JWT 'roles' claim. If empty/unset, no role check is performed.
 
         Output Variables:
         - auth-type: String - Authentication type ("api-key", "jwt", "api-key-jwt", "none")
         - subscription-name: String - Subscription name or JWT username
         - user-id: String - User identifier from JWT claim or subscription name
+        - jwt-roles: String - Comma-separated list of app roles from the JWT token (empty if no JWT or no roles claim)
 
         Upstream Dependencies (required only when JWT is enabled and no custom overrides are set):
         - APIM named values:
@@ -167,9 +170,47 @@
                         return jwt.Claims.GetValueOrDefault("azp", context.Subscription?.Name ?? "anonymous");
                     }" />
 
+                    <!-- Extract app roles from JWT token -->
+                    <set-variable name="jwt-roles" value="@{
+                        var jwt = (Jwt)context.Variables["validated-jwt"];
+                        var roles = jwt.Claims.GetValueOrDefault("roles", "");
+                        return roles ?? "";
+                    }" />
+
                     <trace source="Authentication-JWT" severity="information">
-                        <message>@($"Unified AI - JWT authenticated: {context.Variables.GetValueOrDefault<string>("user-id", "unknown")} accessing {context.Request.Url.Path}")</message>
+                        <message>@($"Unified AI - JWT authenticated: {context.Variables.GetValueOrDefault<string>("user-id", "unknown")} | Roles: {context.Variables.GetValueOrDefault<string>("jwt-roles", "none")} | Path: {context.Request.Url.Path}")</message>
                     </trace>
+
+                    <!-- App role authorization: enforce requiredRoles if set by product policy -->
+                    <choose>
+                        <when condition="@{
+                            var requiredRoles = context.Variables.GetValueOrDefault<string>("requiredRoles", "");
+                            if (string.IsNullOrWhiteSpace(requiredRoles)) { return false; }
+                            var tokenRoles = context.Variables.GetValueOrDefault<string>("jwt-roles", "");
+                            var required = requiredRoles.Split(',').Select(r => r.Trim()).Where(r => !string.IsNullOrEmpty(r));
+                            var actual = tokenRoles.Split(',').Select(r => r.Trim()).Where(r => !string.IsNullOrEmpty(r));
+                            return !required.Any(r => actual.Any(a => a.Equals(r, StringComparison.OrdinalIgnoreCase)));
+                        }">
+                            <return-response>
+                                <set-status code="403" reason="Forbidden" />
+                                <set-header name="Content-Type" exists-action="override">
+                                    <value>application/json</value>
+                                </set-header>
+                                <set-body>@{
+                                    var requiredRoles = context.Variables.GetValueOrDefault<string>("requiredRoles", "");
+                                    var tokenRoles = context.Variables.GetValueOrDefault<string>("jwt-roles", "");
+                                    return new JObject(
+                                        new JProperty("error", new JObject(
+                                            new JProperty("message", "Access denied. Required app role not found in token."),
+                                            new JProperty("code", "insufficient_role"),
+                                            new JProperty("required_roles", requiredRoles),
+                                            new JProperty("token_roles", string.IsNullOrEmpty(tokenRoles) ? "none" : tokenRoles)
+                                        ))
+                                    ).ToString();
+                                }</set-body>
+                            </return-response>
+                        </when>
+                    </choose>
                 </otherwise>
             </choose>
         </when>
@@ -179,6 +220,6 @@
     <set-header name="api-key" exists-action="delete" />
 
     <trace source="Authentication-Complete" severity="information">
-        <message>@($"Unified AI - Auth: {context.Variables.GetValueOrDefault<string>("auth-type", "none")} | User: {context.Variables.GetValueOrDefault<string>("user-id", "anonymous")} | Sub: {context.Variables.GetValueOrDefault<string>("subscription-name", "none")}")</message>
+        <message>@($"Unified AI - Auth: {context.Variables.GetValueOrDefault<string>("auth-type", "none")} | User: {context.Variables.GetValueOrDefault<string>("user-id", "anonymous")} | Roles: {context.Variables.GetValueOrDefault<string>("jwt-roles", "none")} | Sub: {context.Variables.GetValueOrDefault<string>("subscription-name", "none")}")</message>
     </trace>
 </fragment>

@@ -202,6 +202,71 @@ jwtAudience = "custom-value"   ──►     Use "custom-value" for audience
 
 This eliminates the need for separate authentication fragments (`aad-auth`, `aad-auth-custom`) — the unified `security-handler` handles all scenarios through a single, composable interface.
 
+## App Role-Based Authorization
+
+Beyond JWT authentication (validating who the caller is), the `security-handler` supports **app role authorization** (validating what the caller is allowed to do). This uses Entra ID app roles defined on the gateway's app registration and the `roles` claim in the JWT token.
+
+### Available App Roles
+
+The gateway's Entra ID app registration (provisioned by `entra-id-setup/setup.ps1`) defines:
+
+| App Role | Value | Description |
+|----------|-------|-------------|
+| ReadWrite | `Task.ReadWrite` | Full read and write access to all gateway capabilities |
+| Models.Read | `Models.Read` | Access to LLM model endpoints (chat completions, embeddings) |
+| MCP.Read | `MCP.Read` | Access to MCP tool endpoints |
+| Agent.Read | `Agent.Read` | Access to agent endpoints |
+
+### Enabling Role Authorization
+
+Set `requiredRoles` in the product policy alongside `jwtRequired`:
+
+```xml
+<policies>
+    <inbound>
+        <base />
+        <set-variable name="jwtRequired" value="true" />
+        <set-variable name="requiredRoles" value="Models.Read" />
+    </inbound>
+    <backend><base /></backend>
+    <outbound><base /></outbound>
+    <on-error><base /></on-error>
+</policies>
+```
+
+Multiple roles (OR logic — any match grants access):
+
+```xml
+<set-variable name="requiredRoles" value="Models.Read,Agent.Read" />
+```
+
+### How It Works
+
+```
+Product Policy                          Security Handler Fragment
+─────────────                          ──────────────────────────
+jwtRequired = "true"           ──►     Enforce JWT validation
+requiredRoles = "Models.Read"  ──►     Check 'roles' claim in validated JWT
+                                       If Models.Read in token → allow
+                                       If not → 403 Forbidden
+(requiredRoles not set)        ──►     Skip role check (backward compatible)
+```
+
+### Error Responses
+
+| Scenario | HTTP Status | Error Code | Message |
+|----------|-------------|------------|----------|
+| Required role missing | 403 | `insufficient_role` | Access denied. Required app role not found in token. |
+| No JWT (but required) | 401 | `jwt_required` | JWT Bearer token is required for this product. |
+| Invalid JWT | 401 | — | Access denied due to invalid or expired JWT bearer token. |
+
+### Assigning Roles to Clients
+
+Client service principals and managed identities must have the required app role assigned. See the [JWT Client Identity and Permissions Guide](./jwt-client-identity-permissions.md) for:
+- Assigning roles via Entra ID groups (recommended)
+- Direct role assignment via CLI
+- Verifying roles appear in the `roles` claim
+
 ## Security Considerations
 
 - **Token Lifetime**: JWT tokens should be short-lived (1 hour or less)
@@ -228,6 +293,11 @@ This eliminates the need for separate authentication fragments (`aad-auth`, `aad
    - Neither custom overrides nor APIM named values are set
    - APIM named values contain `"not-configured"` placeholder (run `entra-id-setup/setup.ps1`)
 
+4. **403 Insufficient Role**:
+   - The JWT token is valid but the `roles` claim doesn't contain any of the roles in `requiredRoles`
+   - Assign the required app role to the client's service principal or managed identity
+   - Verify role assignment: decode the token and check the `roles` claim
+
 ## Best Practices
 
 1. **Use gateway-level named values** for the primary identity provider (configured once via `entra-id-setup/setup.ps1`)
@@ -235,7 +305,8 @@ This eliminates the need for separate authentication fragments (`aad-auth`, `aad
 3. **Manage client identity permissions at scale** using Entra ID groups (see [JWT Client Identity and Permissions Guide](./jwt-client-identity-permissions.md))
 4. **Monitor authentication metrics** to identify potential security issues
 5. **Regularly rotate client secrets** and update configurations accordingly
-6. **Test across all three endpoints** using the [JWT Authentication Validation Notebook](../validation/citadel-jwt-authentication-tests.ipynb)
+6. **Use app role authorization** (`requiredRoles`) for fine-grained access control beyond JWT authentication
+7. **Test across all three endpoints** using the [JWT Authentication Validation Notebook](../validation/citadel-jwt-authentication-tests.ipynb)
 
 ## Related Resources
 

@@ -268,9 +268,36 @@ param aiFoundryModelsConfig = [
     aiserviceIndex: 0
   }
   {
-    name: 'gpt-5'
+    name: 'Mistral-Large-3'
+    publisher: 'Mistral AI'
+    version: '1'
+    sku: 'GlobalStandard'
+    capacity: 100
+    retirementDate: '2099-12-30'
+    aiserviceIndex: 0
+  }
+  {
+    name: 'gpt-5.4-mini'
     publisher: 'OpenAI'
-    version: '2025-08-07'
+    version: '2026-03-17'
+    sku: 'GlobalStandard'
+    capacity: 100
+    retirementDate: '2026-09-30'
+    aiserviceIndex: 0
+  }
+  {
+    name: 'gpt-5.4-mini'
+    publisher: 'OpenAI'
+    version: '2026-03-17'
+    sku: 'GlobalStandard'
+    capacity: 100
+    retirementDate: '2026-09-30'
+    aiserviceIndex: 1
+  }
+  {
+    name: 'gpt-5.2'
+    publisher: 'OpenAI'
+    version: '2025-12-11'
     sku: 'GlobalStandard'
     capacity: 100
     retirementDate: '2027-02-05'

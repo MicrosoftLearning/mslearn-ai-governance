@@ -375,6 +375,114 @@ JWT authentication works alongside all other access contract policies. A recomme
 
 > **NOTE:** The `jwtRequired` variable must be set within the product policy inbound section (before or after `<base />`). The `security-handler` fragment reads this variable during API-level policy execution.
 
+### App Role Authorization Policy
+
+App role authorization adds fine-grained access control on top of JWT authentication. When enabled for a product, the `security-handler` fragment checks that the JWT token contains at least one of the required app roles in the `roles` claim. This is enforced **after** JWT validation, so the token must first pass audience, issuer, and signature checks.
+
+The gateway's Entra ID app registration defines the following app roles (provisioned by `entra-id-setup/setup.ps1`):
+
+| App Role | Value | Description |
+|----------|-------|-------------|
+| ReadWrite | `Task.ReadWrite` | Full read and write access to all gateway capabilities |
+| Models.Read | `Models.Read` | Access to LLM model endpoints (chat completions, embeddings) |
+| MCP.Read | `MCP.Read` | Access to MCP tool endpoints |
+| Agent.Read | `Agent.Read` | Access to agent endpoints |
+
+> **Full setup guides:**
+> - [JWT Authentication Guide](../../../guides/entraid-auth-validation.md) — Gateway-level configuration
+> - [JWT Client Identity and Permissions Guide](../../../guides/jwt-client-identity-permissions.md) — Assigning roles to client identities
+
+**Basic Usage — Require a Single Role:**
+
+```xml
+<inbound>
+    <base />
+    <!-- Enable JWT requirement -->
+    <set-variable name="jwtRequired" value="true" />
+
+    <!-- Require the Models.Read app role -->
+    <set-variable name="requiredRoles" value="Models.Read" />
+
+    <!-- Other policies (model access, capacity, etc.) -->
+</inbound>
+```
+
+**Multiple Roles (OR logic) — Any Matching Role Grants Access:**
+
+```xml
+<inbound>
+    <base />
+    <set-variable name="jwtRequired" value="true" />
+
+    <!-- Client must have at least one of these roles -->
+    <set-variable name="requiredRoles" value="Models.Read,Agent.Read" />
+</inbound>
+```
+
+**How It Works:**
+
+1. The `security-handler` fragment validates the JWT token (audience, issuer, signature, expiry)
+2. After successful JWT validation, the fragment extracts the `roles` claim from the token
+3. If `requiredRoles` is set by the product policy, the fragment checks if ANY of the required roles exist in the token's `roles` claim (case-insensitive OR match)
+4. If no matching role is found, the request is rejected with HTTP 403 Forbidden
+
+**Error Response Format:**
+
+When a required role is missing, the policy returns:
+
+```json
+{
+    "error": {
+        "message": "Access denied. Required app role not found in token.",
+        "code": "insufficient_role",
+        "required_roles": "Models.Read",
+        "token_roles": "Agent.Read"
+    }
+}
+```
+
+**Configuration Options:**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `requiredRoles` | Comma-separated list of accepted app roles (OR logic) | `"Models.Read"` or `"Models.Read,Agent.Read"` |
+
+> **NOTE:** The `requiredRoles` variable is opt-in. If not set or empty, no role check is performed — this ensures backward compatibility with existing access contracts that only use `jwtRequired`.
+
+**Output Variables Set by Security Handler:**
+
+| Variable | Description | Example Values |
+|----------|-------------|----------------|
+| `jwt-roles` | App roles extracted from the JWT token | `"Models.Read,Agent.Read"` or `""` |
+
+**Recommended Policy Ordering:**
+
+```xml
+<inbound>
+    <base />
+
+    <!-- 1. JWT Authentication -->
+    <set-variable name="jwtRequired" value="true" />
+
+    <!-- 2. App Role Authorization -->
+    <set-variable name="requiredRoles" value="Models.Read" />
+
+    <!-- 3. Model extraction and access control -->
+    <include-fragment fragment-id="set-llm-requested-model" />
+    <set-variable name="allowedModels" value="gpt-4o,gpt-4o-mini" />
+    <include-fragment fragment-id="validate-model-access" />
+
+    <!-- 4. Capacity management -->
+    <llm-token-limit counter-key="@(context.Subscription.Id)"
+        tokens-per-minute="5000"
+        estimate-prompt-tokens="false"
+        token-quota="100000"
+        token-quota-period="Monthly" />
+
+    <!-- 5. Content safety, PII, etc. -->
+</inbound>
+```
+
 ### PII Handling Policy
 
 AI Citadel Gateway supports PII processing using built-in policy fragments that leverage Azure AI Language Service for detection and anonymization. This allows you to protect sensitive data when sending requests to LLM backends.

@@ -23,6 +23,7 @@ Then this guide provides the patterns for granting and managing those permission
 | **Issuer (`iss`)** | `JWT-Issuer` or `jwtIssuer` override | Token must come from expected identity provider |
 | **Signature** | Keys from `JWT-OpenIdConfigUrl` or `jwtOpenIdConfigUrl` override | Token signature verified using provider's public keys |
 | **Expiry (`exp`)** | Current time | Token must not be expired |
+| **Roles (`roles`)** | `requiredRoles` variable (per-product, optional) | If set, token must contain at least one of the required app roles |
 
 Access control beyond token validation is enforced via the **APIM subscription key** (API key), which ties each request to a specific Access Contract (product).
 
@@ -38,12 +39,19 @@ graph LR
         A3[AI Agent 3<br/>Service Principal]
         A4[AI Agent N<br/>...]
     end
-    G[Gateway App Registration<br/>Task.ReadWrite Role] -->|assigned to| GRP[AI-Gateway-Clients Group]
+    G[Gateway App Registration] -->|Task.ReadWrite| GRP[AI-Gateway-Clients Group]
+    G -->|Models.Read| GRP2[AI-Gateway-Models Group]
+    G -->|MCP.Read| GRP3[AI-Gateway-MCP Group]
+    G -->|Agent.Read| GRP4[AI-Gateway-Agents Group]
     GRP --> A1
     GRP --> A2
-    GRP --> A3
-    GRP --> A4
+    GRP2 --> A1
+    GRP2 --> A3
+    GRP3 --> A4
+    GRP4 --> A3
 ```
+
+> **Available App Roles:** The gateway defines `Task.ReadWrite`, `Models.Read`, `MCP.Read`, and `Agent.Read`. Assign different roles to different groups for fine-grained access control. Products can require specific roles via `requiredRoles` in the product policy.
 
 ### Step 1: Create a Security Group
 
@@ -51,30 +59,32 @@ Create an Entra ID security group that will hold all client identities authorize
 
 ```bash
 # Create a security group for gateway clients
-az ad group create --display-name "AI-Gateway-Clients" --mail-nickname "ai-gateway-clients" --description "Service principals and managed identities authorized to access the AI Hub Gateway JWT-protected APIs"
+az ad group create --display-name "Citadel-AI-Gateway-Model-Readers" --mail-nickname "citadel-ai-gateway-model-readers" --description "Service principals and managed identities authorized to access the Citadel's Governance Hub JWT-protected APIs"
 ```
 
 Note the group's `id` (object ID) from the output.
 
 ### Step 2: Assign the Gateway's App Role to the Group
 
-Assign the gateway's `Task.ReadWrite` app role to the group. This is a one-time operation:
+Assign the gateway's `Task.ReadWrite` app role to the group. This is a one-time operation.
+For fine-grained access, create separate groups per role (e.g., `Citadel-AI-Gateway-Models` for `Models.Read`):
 
 ```bash
 # Get the gateway app's service principal ID
 $gatewaySpId = az ad sp list --filter "appId eq '{gateway-app-id}'" --query "[0].id" --output tsv
 
-# Get the Task.ReadWrite app role ID from the gateway's app registration
-$roleId = az ad app show --id {gateway-app-object-id} --query "appRoles[?value=='Task.ReadWrite'].id" --output tsv
+# Get the desired app role ID (e.g., Task.ReadWrite, Models.Read, MCP.Read, Agent.Read)
+$roleId = az ad app show --id {gateway-app-object-id} --query "appRoles[?value=='Models.Read'].id" --output tsv
 
 # Get the group's object ID
-$groupId = az ad group show --group "AI-Gateway-Clients" --query "id" --output tsv
+$groupId = az ad group show --group "Citadel-AI-Gateway-Model-Readers" --query "id" --output tsv
 
 # Assign the app role to the group
+@{ principalId = $groupId; resourceId = $gatewaySpId; appRoleId = $roleId } | ConvertTo-Json | Set-Content -Path body.json
 az rest --method POST `
   --uri "https://graph.microsoft.com/v1.0/groups/$groupId/appRoleAssignments" `
-  --headers "Content-Type=application/json" `
-  --body "{\"principalId\":\"$groupId\",\"resourceId\":\"$gatewaySpId\",\"appRoleId\":\"$roleId\"}"
+  --body '@body.json'
+Remove-Item body.json
 ```
 
 > **Prerequisite:** The group must be a **security group** (not Microsoft 365 group). The assigning user needs at least the **Cloud Application Administrator** or **Privileged Role Administrator** Entra ID role.
@@ -89,7 +99,7 @@ Onboarding a new client is now a single group membership operation:
 $clientSpId = az ad sp list --filter "appId eq '{client-app-id}'" --query "[0].id" --output tsv
 
 # Add to the group
-az ad group member add --group "AI-Gateway-Clients" --member-id $clientSpId
+az ad group member add --group "Citadel-AI-Gateway-Model-Readers" --member-id $clientSpId
 ```
 
 **Add a managed identity:**
@@ -98,17 +108,17 @@ az ad group member add --group "AI-Gateway-Clients" --member-id $clientSpId
 $miPrincipalId = az identity show --name my-ai-agent-identity --resource-group my-rg --query "principalId" --output tsv
 
 # Add to the group
-az ad group member add --group "AI-Gateway-Clients" --member-id $miPrincipalId
+az ad group member add --group "Citadel-AI-Gateway-Model-Readers" --member-id $miPrincipalId
 ```
 
 **Verify membership:**
 ```bash
-az ad group member list --group "AI-Gateway-Clients" --query "[].{name:displayName, type:@odata.type, id:id}" --output table
+az ad group member list --group "Citadel-AI-Gateway-Model-Readers" --query "[].{name:displayName, type:@odata.type, id:id}" --output table
 ```
 
 **Remove a client (offboarding):**
 ```bash
-az ad group member remove --group "AI-Gateway-Clients" --member-id {principal-id}
+az ad group member remove --group "Citadel-AI-Gateway-Model-Readers" --member-id {principal-id}
 ```
 
 ### Why Groups Are Preferred
@@ -156,7 +166,7 @@ Store the generated `password` securely (e.g., Azure Key Vault, environment vari
 
 #### Step 3: Grant Permission to the Gateway
 
-**Recommended: Add to the `AI-Gateway-Clients` group:**
+**Recommended: Add to the `Citadel-AI-Gateway-Model-Readers` group:**
 
 ```bash
 # Ensure the client app has a service principal
@@ -166,7 +176,7 @@ az ad sp create --id {client-app-id} 2>$null
 $clientSpId = az ad sp list --filter "appId eq '{client-app-id}'" --query "[0].id" --output tsv
 
 # Add to the gateway clients group
-az ad group member add --group "AI-Gateway-Clients" --member-id $clientSpId
+az ad group member add --group "Citadel-AI-Gateway-Model-Readers" --member-id $clientSpId
 ```
 
 **Alternative: Direct app role assignment** (for single-identity scenarios):
@@ -192,7 +202,9 @@ $gatewaySpId = az ad sp list --filter "appId eq '{gateway-client-id}'" --query "
 $roleId = az ad app show --id {gateway-app-object-id} --query "appRoles[?value=='Task.ReadWrite'].id" --output tsv
 
 # Assign the app role to the client's service principal
-az rest --method POST --uri "https://graph.microsoft.com/v1.0/servicePrincipals/{client-sp-id}/appRoleAssignments" --headers "Content-Type=application/json" --body "{\"principalId\":\"{client-sp-id}\",\"resourceId\":\"$gatewaySpId\",\"appRoleId\":\"$roleId\"}"
+@{ principalId = "{client-sp-id}"; resourceId = $gatewaySpId; appRoleId = $roleId } | ConvertTo-Json | Set-Content -Path body.json
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/servicePrincipals/{client-sp-id}/appRoleAssignments" --body '@body.json'
+Remove-Item body.json
 ```
 
 </details>
@@ -259,14 +271,14 @@ Note the `principalId` (object ID) and `clientId` from the output.
 
 #### Step 2: Grant Permission to the Gateway
 
-**Recommended: Add to the `AI-Gateway-Clients` group:**
+**Recommended: Add to the `Citadel-AI-Gateway-Model-Readers` group:**
 
 ```bash
 # Get the managed identity's principal ID
 $miPrincipalId = az identity show --name my-ai-agent-identity --resource-group my-rg --query "principalId" --output tsv
 
 # Add to the gateway clients group
-az ad group member add --group "AI-Gateway-Clients" --member-id $miPrincipalId
+az ad group member add --group "Citadel-AI-Gateway-Model-Readers" --member-id $miPrincipalId
 ```
 
 **Alternative: Direct app role assignment:**
@@ -282,7 +294,9 @@ $gatewaySpId = az ad sp list --filter "appId eq '{gateway-client-id}'" --query "
 $roleId = az ad app show --id {gateway-app-object-id} --query "appRoles[?value=='Task.ReadWrite'].id" --output tsv
 
 # Assign the app role to the managed identity
-az rest --method POST --uri "https://graph.microsoft.com/v1.0/servicePrincipals/{managed-identity-principal-id}/appRoleAssignments" --headers "Content-Type=application/json" --body "{\"principalId\":\"{managed-identity-principal-id}\",\"resourceId\":\"$gatewaySpId\",\"appRoleId\":\"$roleId\"}"
+@{ principalId = "{managed-identity-principal-id}"; resourceId = $gatewaySpId; appRoleId = $roleId } | ConvertTo-Json | Set-Content -Path body.json
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/servicePrincipals/{managed-identity-principal-id}/appRoleAssignments" --body '@body.json'
+Remove-Item body.json
 ```
 
 </details>
@@ -342,8 +356,9 @@ The key requirement is that the token's `aud` (audience) and `iss` (issuer) clai
 | 1. Create identity | `az ad app create` + `az ad sp create` | `az identity create` or enable on compute |
 | 2. Create credential | `az ad app credential reset` | Not needed (Azure-managed) |
 | 3. Grant gateway access | `az ad group member add` (recommended) | `az ad group member add` (recommended) |
-| 4. Acquire token | `POST /oauth2/v2.0/token` with client credentials | `DefaultAzureCredential().get_token()` |
-| 5. Call gateway | `api-key` + `Authorization: Bearer {token}` | `api-key` + `Authorization: Bearer {token}` |
+| 4. Assign app role | Add to role-specific group (e.g., `AI-Gateway-Models` for `Models.Read`) | Same — group membership grants the role |
+| 5. Acquire token | `POST /oauth2/v2.0/token` with client credentials | `DefaultAzureCredential().get_token()` |
+| 6. Call gateway | `api-key` + `Authorization: Bearer {token}` | `api-key` + `Authorization: Bearer {token}` |
 
 ## Troubleshooting
 
@@ -354,6 +369,7 @@ The key requirement is that the token's `aud` (audience) and `iss` (issuer) clai
 | `AADSTS7000215: invalid client secret` | Secret expired or incorrect | Rotate the secret with `az ad app credential reset` |
 | `401: invalid or expired JWT` | Token audience doesn't match gateway config | Verify token `aud` matches `JWT-AppRegistrationId` or `jwtAudience` |
 | `401: jwt_required` | No Bearer token in request | Add `Authorization: Bearer {token}` header |
+| `403: insufficient_role` | Token valid but missing required app role | Assign the required role to the client identity (via group or direct assignment) |
 | Token works in Postman but not in code | Scope format incorrect | Use `api://{gateway-app-id}/.default` (not just the client ID) |
 
 ## Related Resources

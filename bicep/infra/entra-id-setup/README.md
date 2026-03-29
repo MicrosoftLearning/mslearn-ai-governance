@@ -32,6 +32,10 @@ This is a **standalone operation** — no redeployment of the main landing zone 
 | **APIM Access** | Deployer needs `API Management Service Contributor` role |
 | **azd** | Azure Developer CLI installed (for environment variable storage) |
 
+>NOTE: For Key Vault Access, you can assign the `Key Vault Secrets Officer` role to your user account on the Key Vault. 
+>- The main deployment does not automatically assign this role. The following command show example execution ```az role assignment create --role "Key Vault Secrets Officer" --assignee "REPLACE@TENANT.onmicrosoft.com" --scope (az keyvault show --name kv-REPLACE --query id --output tsv)```
+>- Azure Key Vault public network access is disabled by default. Ensure you can access Key Vault from the machine that will run the setup script. You may need to enable public network access temprarily or run the script from a VM with access to the Key Vault.
+
 ## Usage
 
 ### Recommended Flow
