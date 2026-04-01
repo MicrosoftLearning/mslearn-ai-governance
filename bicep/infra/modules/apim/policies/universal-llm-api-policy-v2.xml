@@ -33,6 +33,9 @@
         <!-- Set default backend pool (empty = return error for unmapped models) -->
         <set-variable name="defaultBackendPool" value="" />
 
+        <!-- Validate model access based on allowedModels -->
+        <include-fragment fragment-id="validate-model-access" />
+
         <!-- Step 4: Load backend pool configurations -->
         <include-fragment fragment-id="set-backend-pools" />
 
@@ -64,7 +67,7 @@
     </backend>
     <outbound>
         <base />
-        <include-fragment fragment-id="diagnostic-headers" />
+        <include-fragment fragment-id="set-response-headers" />
     </outbound>
     <on-error>
         <base />
@@ -76,6 +79,6 @@
         -->
         
         <include-fragment fragment-id="raise-throttling-events" />
-        <include-fragment fragment-id="diagnostic-headers" />
+        <include-fragment fragment-id="set-response-headers" />
     </on-error>
 </policies>

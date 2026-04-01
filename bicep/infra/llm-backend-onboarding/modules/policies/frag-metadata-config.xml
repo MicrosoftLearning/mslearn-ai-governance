@@ -16,7 +16,7 @@
         - set-target-backend-pool fragment: Uses models config via apiTypeOverrideBackend for routing
         - path-builder fragment: Uses api-types for path reconstruction
         - request-processor fragment: Uses api-types for API type detection and apiTypeOverrideBackend
-        - diagnostic-headers fragment: References model and API information for debug headers
+        - set-response-headers fragment: References model and API information for debug headers
 
         Note: The 'models' section is dynamically generated from llmBackendConfig during Bicep deployment.
               The 'api-types', 'cache-settings', and 'timeout-settings' sections are static definitions.

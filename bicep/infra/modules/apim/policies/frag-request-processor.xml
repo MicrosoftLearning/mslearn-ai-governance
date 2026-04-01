@@ -31,7 +31,7 @@
         - set-backend-authorization fragment: Respects skipBackendUrlRewrite to skip URL rewriting
         - set-llm-usage fragment: Uses requestedModel for metrics
         - validate-model-access fragment: Uses requestedModel for access check
-        - diagnostic-headers fragment: Uses routing information for debugging
+        - set-response-headers fragment: Uses routing information for debugging
 
         Upstream Dependencies:
         - central-cache-manager fragment: Provides config-api-types, config-models

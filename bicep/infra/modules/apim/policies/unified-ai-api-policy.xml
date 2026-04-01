@@ -12,7 +12,7 @@
                      set-backend-authorization, validate-model-access, set-llm-usage) unified across
                      all 3 API flavors (Azure OpenAI, Universal LLM, Unified AI).
                      Uses Unified-AI-specific fragments (metadata-config, central-cache-manager,
-                     request-processor, security-handler, path-builder, diagnostic-headers) for
+                     request-processor, security-handler, path-builder, set-response-headers) for
                      wildcard routing, multi-API-type support, and JWT authentication.
 
             Fragment Execution Order:
@@ -26,7 +26,7 @@
             8. set-backend-authorization: Backend auth + set-backend-service [SHARED]
             9. path-builder: Backend path construction and URI rewriting [Unified AI specific]
             10. set-llm-usage: Token usage metrics [SHARED]
-            11. diagnostic-headers: Response header injection (outbound) [Unified AI specific]
+            11. set-response-headers: Response header injection (outbound) [Unified AI specific]
         -->
 
         <!-- Validate product context -->
@@ -74,7 +74,7 @@
         <!-- Step 7: Select target backend pool [SHARED - extended with apiTypeOverrideBackend for Unified AI] -->
         <include-fragment fragment-id="set-target-backend-pool" />
 
-        <!-- Alias targetBackendPool to selected-backend for diagnostic-headers compatibility -->
+        <!-- Alias targetBackendPool to selected-backend for set-response-headers compatibility -->
         <set-variable name="selected-backend" value="@(context.Variables.GetValueOrDefault<string>("targetBackendPool", ""))" />
 
         <!-- Step 8: Backend auth + set-backend-service [SHARED with Azure OpenAI / Universal LLM] -->
@@ -121,11 +121,11 @@
     </backend>
     <outbound>
         <base />
-        <include-fragment fragment-id="diagnostic-headers" />
+        <include-fragment fragment-id="set-response-headers" />
     </outbound>
     <on-error>
         <base />
         <include-fragment fragment-id="raise-throttling-events" />
-        <include-fragment fragment-id="diagnostic-headers" />
+        <include-fragment fragment-id="set-response-headers" />
     </on-error>
 </policies>

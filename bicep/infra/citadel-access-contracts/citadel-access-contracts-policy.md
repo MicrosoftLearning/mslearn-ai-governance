@@ -193,9 +193,59 @@ Based on this policy, you can configure alerts in Application Insights to monito
 >NOTE: Detailed guide on how to setup throttling events handling can be found in [Throttling Events Handling Guide](./throttling-events-handling.md)
 
 
+### Response Headers Policy
+
+The `set-response-headers` policy fragment injects `UAIG-*` response headers that expose internal gateway state for debugging and observability. These headers help trace request processing through the gateway, including authentication context, model routing, backend selection, and cache operations.
+
+**By default, response headers are disabled.** To enable them for a specific product, set the `enableResponseHeaders` variable to `true` in the product policy inbound section.
+
+**Basic Usage:**
+
+```xml
+<inbound>
+    <base />
+    <!-- Enable advanced response headers for debugging -->
+    <set-variable name="enableResponseHeaders" value="@(true)" />
+</inbound>
+```
+
+**Headers Returned (when enabled):**
+
+| Header | Source Variable | Description |
+|--------|----------------|-------------|
+| `UAIG-Auth-Type` | `auth-type` | Authentication method (`api-key`, `jwt`, `api-key-jwt`, `none`) |
+| `UAIG-User-Id` | `user-id` | Authenticated user identifier |
+| `UAIG-Subscription` | `subscription-name` | APIM subscription name |
+| `UAIG-Model-Id` | `requestedModel` | Requested LLM model name |
+| `UAIG-API-Type` | `api-type` | Detected API type (e.g., `azure-openai`, `universal-llm`) |
+| `UAIG-Processed-Path` | `routing-processed-path` | Processed request path used for routing |
+| `UAIG-API-Version` | `selected-api-version` | Selected API version |
+| `UAIG-Is-Streaming` | `is-streaming` | Whether the request is a streaming request |
+| `UAIG-Backend` | `selected-backend` | Selected backend pool |
+| `UAIG-Final-Path` | `finalPath` | Final backend path after rewriting |
+| `UAIG-Cache-Operation` | `cache-operation` | Cache operation performed (hit/miss/skip) |
+| `UAIG-Request-Id` | — | APIM request correlation ID |
+| `UAIG-Gateway-Region` | — | Azure region of the APIM gateway |
+
+**How It Works:**
+
+1. The `set-response-headers` fragment is included in the outbound and on-error sections of all three API policies (Azure OpenAI, Universal LLM, Unified AI)
+2. The fragment checks the `enableResponseHeaders` variable — if not set or `false`, no headers are injected
+3. When enabled via a product policy, the fragment adds all `UAIG-*` headers to the response using values set by upstream fragments during request processing
+
+**Configuration Options:**
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `enableResponseHeaders` | bool | `false` | Set to `@(true)` to enable response header injection |
+
+>**NOTE:** Response headers expose internal gateway state and should only be enabled for development/debugging products. Avoid enabling them in production access contracts to prevent leaking internal routing details to clients.
+
 ### Content Safety Policy
 
 Content safety can be enforced at a gateway level using the built-in content safety policy. You can configure the content safety policy to block or flag content based on your organization's requirements.
+
+>NOTE: Content Safety has a context input limit of **10K** characters. If the content to be evaluated exceeds this limit, the policy will return a 413 Payload Too Large error. To handle this, you can set up a custom policy to split longer input content before passing it to the content safety policy.
 
 ```xml
 <inbound>
@@ -332,48 +382,11 @@ grant_type=client_credentials
 &scope={audience}/.default
 ```
 
-**Using JWT via Agent Access Contract Request:**
-
-When using the `base-access-contract-request` module, enable JWT in the contract JSON:
-
-```json
-{
-  "policies": {
-    "jwtAuth": { "enabled": true }
-  }
-}
-```
-
-This automatically inserts the `<set-variable name="jwtRequired" value="true" />` snippet into the generated product policy.
-
 **Combining JWT with Other Policies:**
 
-JWT authentication works alongside all other access contract policies. A recommended order:
+JWT authentication works alongside all other access contract policies like model access control and capacity management.
 
-```xml
-<inbound>
-    <base />
-    
-    <!-- 1. JWT Authentication (must be first to reject unauthorized requests early) -->
-    <set-variable name="jwtRequired" value="true" />
-    
-    <!-- 2. Model extraction and access control -->
-    <include-fragment fragment-id="set-llm-requested-model" />
-    <set-variable name="allowedModels" value="gpt-4o,gpt-4o-mini" />
-    <include-fragment fragment-id="validate-model-access" />
-    
-    <!-- 3. Capacity management -->
-    <llm-token-limit counter-key="@(context.Subscription.Id)" 
-        tokens-per-minute="5000" 
-        estimate-prompt-tokens="false" 
-        token-quota="100000" 
-        token-quota-period="Monthly" />
-    
-    <!-- 4. Content safety, PII, etc. -->
-</inbound>
-```
-
-> **NOTE:** The `jwtRequired` variable must be set within the product policy inbound section (before or after `<base />`). The `security-handler` fragment reads this variable during API-level policy execution.
+> **NOTE:** The `jwtRequired` variable must be set within the product policy inbound section. The `security-handler` fragment reads this variable during API-level policy execution.
 
 ### App Role Authorization Policy
 

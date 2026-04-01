@@ -162,18 +162,6 @@ citadel-access-contracts/
 │       └── prod/                       # Production environment
 │           ├── main.bicepparam
 │           └── ai-product-policy.xml
-└── samples/
-    ├── healthcare-chatbot/             # Sample: Healthcare AI
-    │   ├── dev/
-    │   │   ├── main.bicepparam         # Deployment parameters
-    │   │   └── ai-product-policy.xml   # Custom APIM policy
-    │   └── prod/
-    │       ├── main.bicepparam
-    │       └── ai-product-policy.xml
-    └── customer-support-agent/         # Sample: Support AI
-        └── dev/
-            ├── main.bicepparam
-            └── ai-product-policy.xml
 ```
 
 ---

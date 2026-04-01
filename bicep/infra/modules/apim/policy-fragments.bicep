@@ -28,47 +28,12 @@ resource apimService 'Microsoft.ApiManagement/service@2022-08-01' existing = {
   name: apimServiceName
 }
 
-resource aadAuthPolicyFragment 'Microsoft.ApiManagement/service/policyFragments@2022-08-01' = {
-  parent: apimService
-  name: 'aad-auth'
-  properties: {
-    value: loadTextContent('./policies/frag-aad-auth.xml')
-    format: 'rawxml'
-  }
-}
-
-resource openAIUsagePolicyFragment 'Microsoft.ApiManagement/service/policyFragments@2022-08-01' = {
-  parent: apimService
-  name: 'openai-usage'
-  properties: {
-    value: loadTextContent('./policies/frag-openai-usage.xml')
-    format: 'rawxml'
-  }
-}
-
-resource openAIUsageStreamingPolicyFragment 'Microsoft.ApiManagement/service/policyFragments@2022-08-01' = {
-  parent: apimService
-  name: 'openai-usage-streaming'
-  properties: {
-    value: loadTextContent('./policies/frag-openai-usage-streaming.xml')
-    format: 'rawxml'
-  }
-}
-
 resource aiUsagePolicyFragment 'Microsoft.ApiManagement/service/policyFragments@2022-08-01' = {
   parent: apimService
   name: 'ai-usage'
   properties: {
+    description: 'Tracks usage of all AI-related APIs with flexible dimensions for models, features, and more'
     value: loadTextContent('./policies/frag-ai-usage.xml')
-    format: 'rawxml'
-  }
-}
-
-resource throttlingEventsPolicyFragment 'Microsoft.ApiManagement/service/policyFragments@2022-08-01' = {
-  parent: apimService
-  name: 'throttling-events'
-  properties: {
-    value: loadTextContent('./policies/frag-throttling-events.xml')
     format: 'rawxml'
   }
 }
@@ -77,6 +42,7 @@ resource raiseThrottlingEventsPolicyFragment 'Microsoft.ApiManagement/service/po
   parent: apimService
   name: 'raise-throttling-events'
   properties: {
+    description: 'Raises custom events when throttling limits are hit through App Insights metrics, for proactive monitoring and alerting'
     value: loadTextContent('./policies/frag-raise-throttling-events.xml')
     format: 'rawxml'
   }
@@ -86,6 +52,7 @@ resource piiAnonymizationPolicyFragment 'Microsoft.ApiManagement/service/policyF
   parent: apimService
   name: 'pii-anonymization'
   properties: {
+    description: 'Anonymizes personally identifiable information (PII) in API requests'
     value: loadTextContent('./policies/frag-pii-anonymization.xml')
     format: 'rawxml'
   }
@@ -95,6 +62,7 @@ resource piiDenonymizationPolicyFragment 'Microsoft.ApiManagement/service/policy
   parent: apimService
   name: 'pii-deanonymization'
   properties: {
+    description: 'Deanonymizes personally identifiable information (PII) in API responses when needed for backend processing'
     value: loadTextContent('./policies/frag-pii-deanonymization.xml')
     format: 'rawxml'
   }
@@ -104,6 +72,7 @@ resource piiStateSavingPolicyFragment 'Microsoft.ApiManagement/service/policyFra
   parent: apimService
   name: 'pii-state-saving'
   properties: {
+    description: 'Saves the state of personally identifiable information (PII) for testing & validation purposes'
     value: loadTextContent('./policies/frag-pii-state-saving.xml')
     format: 'rawxml'
   }
@@ -113,16 +82,8 @@ resource aiFoundryCompatibilityPolicyFragment 'Microsoft.ApiManagement/service/p
   parent: apimService
   name: 'ai-foundry-compatibility'
   properties: {
+    description: 'Ensures compatibility with Microsoft Foundry CORS requirements'
     value: loadTextContent('./policies/frag-ai-foundry-compatibility.xml')
-    format: 'rawxml'
-  }
-}
-
-resource aiFoundryDeploymentsPolicyFragment 'Microsoft.ApiManagement/service/policyFragments@2022-08-01' = if (enableAIModelInference) {
-  parent: apimService
-  name: 'ai-foundry-deployments'
-  properties: {
-    value: loadTextContent('./policies/frag-ai-foundry-deployments.xml')
     format: 'rawxml'
   }
 }
@@ -171,12 +132,12 @@ resource securityHandlerFragment 'Microsoft.ApiManagement/service/policyFragment
   }
 }
 
-resource diagnosticHeadersFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = if (enableUnifiedAiApi) {
+resource setResponseHeadersFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = if (enableUnifiedAiApi) {
   parent: apimService
-  name: 'diagnostic-headers'
+  name: 'set-response-headers'
   properties: {
-    description: 'Adds UAIG-* response headers for Unified AI API debugging'
-    value: loadTextContent('./policies/frag-diagnostic-headers.xml')
+    description: 'Adds UAIG-* response headers when enableResponseHeaders is true'
+    value: loadTextContent('./policies/frag-set-response-headers.xml')
     format: 'rawxml'
   }
 }
@@ -185,16 +146,9 @@ resource diagnosticHeadersFragment 'Microsoft.ApiManagement/service/policyFragme
 //    OUTPUTS
 // ------------------
 
-@description('The name of the AAD auth policy fragment')
-output aadAuthPolicyFragmentName string = aadAuthPolicyFragment.name
-@description('The name of the OpenAI usage policy fragment')
-output openAIUsagePolicyFragmentName string = openAIUsagePolicyFragment.name
-@description('The name of the OpenAI usage streaming policy fragment')
-output openAIUsageStreamingPolicyFragmentName string = openAIUsageStreamingPolicyFragment.name
 @description('The name of the AI usage policy fragment')
 output aiUsagePolicyFragmentName string = aiUsagePolicyFragment.name
-@description('The name of the throttling events policy fragment')
-output throttlingEventsPolicyFragmentName string = throttlingEventsPolicyFragment.name
+
 @description('The name of the PII anonymization policy fragment')
 output piiAnonymizationPolicyFragmentName string = piiAnonymizationPolicyFragment.name
 
@@ -204,8 +158,6 @@ output piiDenonymizationPolicyFragmentName string = piiDenonymizationPolicyFragm
 output piiStateSavingPolicyFragmentName string = enablePIIAnonymization ? piiStateSavingPolicyFragment.name : ''
 @description('The name of the AI Foundry compatibility policy fragment')
 output aiFoundryCompatibilityPolicyFragmentName string = enablePIIAnonymization ? aiFoundryCompatibilityPolicyFragment.name : ''
-@description('The name of the AI Foundry deployments policy fragment')
-output aiFoundryDeploymentsPolicyFragmentName string = enableAIModelInference ? aiFoundryDeploymentsPolicyFragment.name : ''
 
 @description('The name of the central cache manager policy fragment')
 output centralCacheManagerFragmentName string = enableUnifiedAiApi ? centralCacheManagerFragment.name : ''
@@ -215,5 +167,5 @@ output requestProcessorFragmentName string = enableUnifiedAiApi ? requestProcess
 output pathBuilderFragmentName string = enableUnifiedAiApi ? pathBuilderFragment.name : ''
 @description('The name of the security handler policy fragment')
 output securityHandlerFragmentName string = enableUnifiedAiApi ? securityHandlerFragment.name : ''
-@description('The name of the diagnostic headers policy fragment')
-output diagnosticHeadersFragmentName string = enableUnifiedAiApi ? diagnosticHeadersFragment.name : ''
+@description('The name of the set response headers policy fragment')
+output setResponseHeadersFragmentName string = enableUnifiedAiApi ? setResponseHeadersFragment.name : ''

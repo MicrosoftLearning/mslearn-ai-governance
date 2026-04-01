@@ -129,7 +129,7 @@ param enableAIGatewayPiiRedaction = bool(readEnvironmentVariable('ENABLE_PII_RED
 param enableOpenAIRealtime = bool(readEnvironmentVariable('ENABLE_OPENAI_REALTIME', 'true'))
 param enableAIFoundry = bool(readEnvironmentVariable('ENABLE_AI_FOUNDRY', 'true'))
 param entraAuth = bool(readEnvironmentVariable('AZURE_ENTRA_AUTH', 'false'))
-param enableAPICenter = bool(readEnvironmentVariable('ENABLE_API_CENTER', 'false'))
+param enableAPICenter = bool(readEnvironmentVariable('ENABLE_API_CENTER', 'true'))
 param enableManagedRedis = bool(readEnvironmentVariable('ENABLE_MANAGED_REDIS', 'true'))
 param enableUnifiedAiApi = bool(readEnvironmentVariable('ENABLE_UNIFIED_AI_API', 'true'))
 
