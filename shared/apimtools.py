@@ -174,6 +174,8 @@ class APIMClientTool:
     def get_backends(self) -> tuple[list[dict], list[dict]]:
         """
         Retrieves all backends from APIM and categorizes them into individual backends and backend pools.
+        Uses the Azure REST API directly with a recent API version that supports backend pools,
+        since the azure-mgmt-apimanagement SDK v4.0.0 (API 2022-08-01) predates the pool feature.
         
         Returns:
             Tuple of (individual_backends, backend_pools) where each is a list of dictionaries
@@ -182,40 +184,44 @@ class APIMClientTool:
             RuntimeError: If backends cannot be retrieved
         """
         try:
-            utils.print_info("Retrieving APIM backends using Azure SDK...")
+            utils.print_info("Retrieving APIM backends using Azure REST API...")
             
-            backends = self.client.backend.list_by_service(
-                resource_group_name=self.resource_group_name,
-                service_name=self.apim_resource_name
+            credential = DefaultAzureCredential()
+            token = credential.get_token("https://management.azure.com/.default")
+            
+            api_version = "2024-05-01"
+            url = (
+                f"https://management.azure.com/subscriptions/{self.subscription_id}"
+                f"/resourceGroups/{self.resource_group_name}"
+                f"/providers/Microsoft.ApiManagement/service/{self.apim_resource_name}"
+                f"/backends?api-version={api_version}"
             )
+            
+            response = requests.get(url, headers={"Authorization": f"Bearer {token.token}"})
+            response.raise_for_status()
+            
+            backends_data = response.json().get("value", [])
             
             individual_backends = []
             backend_pools = []
             
-            for backend in backends:
-                backend_name = backend.name or ''
-                backend_url = backend.url or ''
-                backend_type = backend.type if hasattr(backend, 'type') else None
-                description = backend.description or ''
+            for backend in backends_data:
+                props = backend.get("properties", {})
+                backend_name = backend.get("name", "")
+                backend_url = props.get("url", "")
+                description = props.get("description", "")
+                backend_type = props.get("type", "")
                 
-                # Check if it's a pool type backend
-                is_pool = False
-                pool_services = []
-                
-                # Check for pool property
-                if hasattr(backend, 'pool') and backend.pool is not None:
-                    is_pool = True
-                    if hasattr(backend.pool, 'services') and backend.pool.services:
-                        pool_services = [
-                            {
-                                'id': svc.id if hasattr(svc, 'id') else str(svc),
-                                'priority': svc.priority if hasattr(svc, 'priority') else None,
-                                'weight': svc.weight if hasattr(svc, 'weight') else None
-                            }
-                            for svc in backend.pool.services
-                        ]
-                
-                if is_pool:
+                if backend_type == "Pool":
+                    pool = props.get("pool", {})
+                    pool_services = [
+                        {
+                            'id': svc.get('id', ''),
+                            'priority': svc.get('priority'),
+                            'weight': svc.get('weight')
+                        }
+                        for svc in pool.get("services", [])
+                    ]
                     backend_pools.append({
                         'name': backend_name,
                         'description': description,

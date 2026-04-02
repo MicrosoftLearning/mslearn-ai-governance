@@ -1,2 +1,0 @@
-        <!-- Extract and validate model parameter from request -->
-        <include-fragment fragment-id="set-llm-requested-model" />

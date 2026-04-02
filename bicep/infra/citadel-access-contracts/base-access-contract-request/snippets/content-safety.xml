@@ -1,6 +1,0 @@
-        <!-- Content Safety - Enforce content safety policy -->
-        <llm-content-safety backend-id="content-safety-backend" shield-prompt="{{SHIELD_PROMPT}}">
-            <categories output-type="EightSeverityLevels">
-{{CATEGORIES}}
-            </categories>
-        </llm-content-safety>

@@ -5,15 +5,15 @@ using '../../../main.bicep'
 // ============================================================================
 
 param apim = {
-  subscriptionId: 'd2e7f84f-2790-4baa-9520-59ae8169ed0d'
-  resourceGroupName: 'rg-ai-hub-citadel-dev-31'
-  name: 'apim-icerk5vrptwxm'
+  subscriptionId: 'REPLACE'
+  resourceGroupName: 'REPLACE'
+  name: 'apim-REPLACE'
 }
 
 param keyVault = {
-  subscriptionId: 'd2e7f84f-2790-4baa-9520-59ae8169ed0d'
-  resourceGroupName: 'rg-foundry-agent-spoke-01'
-  name: 'kv-foundry-spoke-01'
+  subscriptionId: 'REPLACE'
+  resourceGroupName: 'REPLACE'
+  name: 'REPLACE'
 }
 
 param useTargetAzureKeyVault = false
@@ -25,7 +25,7 @@ param useCase = {
 }
 
 param apiNameMapping = {
-  LLM: ['universal-llm-api', 'azure-openai-api']
+  LLM: ['universal-llm-api', 'azure-openai-api', 'unified-ai-api']
 }
 
 param services = [

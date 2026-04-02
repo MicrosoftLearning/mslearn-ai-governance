@@ -61,6 +61,18 @@ var modelDeploymentsCode = modelDeploymentsCodeResult.code
 // Inject generated model deployments code into available models template
 var updatedGetAvailableModelsFragmentXml = replace(getAvailableModelsFragmentTemplate, '//{modelDeploymentsCode}', modelDeploymentsCode)
 
+// Generate metadata-config fragment for the Unified AI API
+// Maps each model to its backend pool/direct backend + apiVersion + timeout + inferenceApiVersion
+var metadataModelsResult = reduce(llmBackendConfig, { code: '', seenModels: [] }, (acc, config) =>
+  reduce(config.supportedModels, acc, (modelAcc, model) => {
+    code: contains(modelAcc.seenModels, model.name) ? modelAcc.code : '${modelAcc.code}${length(modelAcc.seenModels) > 0 ? ',\n' : ''}\t\t\t\'${model.name}\': {\n\t\t\t\t\'backend\': \'${reduce(allPools, '', (poolAcc, pool) => contains(pool.supportedModels, model.name) ? pool.poolName : poolAcc)}\',\n\t\t\t\t\'apiVersion\': \'${model.?apiVersion ?? '2024-02-15-preview'}\',\n\t\t\t\t\'timeout\': ${model.?timeout ?? 120}${!empty(model.?inferenceApiVersion) ? ',\n\t\t\t\t\'inferenceApiVersion\': \'${model.inferenceApiVersion}\'' : ''}\n\t\t\t}'
+    seenModels: contains(modelAcc.seenModels, model.name) ? modelAcc.seenModels : union(modelAcc.seenModels, [model.name])
+  })
+)
+var metadataModelsCode = metadataModelsResult.code
+var metadataConfigFragmentXml = loadTextContent('./policies/frag-metadata-config.xml')
+var updatedMetadataConfigFragmentXml = replace(metadataConfigFragmentXml, '//{modelsConfigCode}', metadataModelsCode)
+
 // ------------------
 //    RESOURCES
 // ------------------
@@ -146,6 +158,18 @@ resource getAvailableModelsFragment 'Microsoft.ApiManagement/service/policyFragm
   }
 }
 
+// Policy Fragment: Metadata Configuration
+// Provides centralized configuration for the Unified AI API with dynamically generated model mappings
+resource metadataConfigFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  name: 'metadata-config'
+  parent: apimService
+  properties: {
+    description: 'Dynamically generated metadata configuration for Unified AI API routing'
+    format: 'rawxml'
+    value: updatedMetadataConfigFragmentXml
+  }
+}
+
 // ------------------
 //    OUTPUTS
 // ------------------
@@ -161,6 +185,9 @@ output setTargetBackendPoolFragmentName string = setTargetBackendPoolFragment.na
 
 @description('Name of the get-available-models fragment')
 output getAvailableModelsFragmentName string = getAvailableModelsFragment.name
+
+@description('Name of the metadata-config fragment')
+output metadataConfigFragmentName string = metadataConfigFragment.name
 
 @description('Generated backend pools configuration code')
 output backendPoolsCode string = backendPoolsCode

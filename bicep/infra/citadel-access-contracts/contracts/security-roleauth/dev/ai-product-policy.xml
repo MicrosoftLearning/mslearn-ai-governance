@@ -1,0 +1,31 @@
+<policies>
+    <inbound>
+        <base />
+        <!-- Enable JWT requirement for this product -->
+        <set-variable name="jwtRequired" value="true" />
+
+        <!-- Enforce app role authorization: only Models.Read role holders can access -->
+        <set-variable name="requiredRoles" value="Models.Read" />
+
+        <!-- Extract and validate model parameter from request -->
+        <include-fragment fragment-id="set-llm-requested-model" />
+
+        <!-- Setting allowed models variable (comma-separated list) -->
+        <set-variable name="allowedModels" value="gpt-4o,gpt-4o-mini,phi-4" />
+
+        <!-- Validate model access based on allowedModels -->
+        <include-fragment fragment-id="validate-model-access" />
+
+        <!-- Capacity management -->
+        <llm-token-limit counter-key="@(context.Subscription.Id)" tokens-per-minute="5000" estimate-prompt-tokens="false" token-quota="100000" token-quota-period="Monthly" />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

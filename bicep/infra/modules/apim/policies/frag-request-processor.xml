@@ -1,0 +1,240 @@
+<fragment>
+    <!--
+        Fragment: Request Processor
+        Purpose: Analyzes incoming requests to extract routing context (API type, model, path)
+                 and parse JSON bodies. Provides foundational variables used by all downstream fragments.
+                 Uses centralized 'requestedModel' variable name for compatibility with existing AI Hub Gateway fragments.
+                 Sets apiTypeOverrideBackend when api-type config defines an explicit backend.
+                 Sets skipBackendUrlRewrite so set-backend-authorization defers URI rewriting to path-builder.
+
+        Input Variables:
+        - context.Request.Url.Path: Request path to analyze
+        - context.Request.Body: Request body for JSON parsing
+        - context.Api.Path: API path prefix to remove
+        - config-api-types: API type configuration from central-cache-manager
+        - config-models: Models configuration from central-cache-manager
+
+        Output Variables:
+        - api-type: Detected API type (openai|inference|responses|responses-v1|openai-v1|geminiopenai)
+        - requestedModel: Extracted model identifier (uses same variable name as frag-set-llm-requested-model.xml)
+        - routing-processed-path: Request path with API prefix removed (always has leading slash)
+        - response-id: Response ID for GET/DELETE operations on responses API
+        - parsed-request-body: Parsed JSON object from request body (empty JObject for GET/DELETE or parse failure)
+        - selected-api-version: API version for backend requests (model-specific or api-type default)
+        - is-streaming: Whether request has stream:true ("true"/"false")
+        - apiTypeOverrideBackend: Backend from api-type config (empty if model-based routing should be used)
+        - skipBackendUrlRewrite: Always set to "true" — path-builder handles URI construction for Unified AI
+
+        Downstream Consumers:
+        - path-builder fragment: Uses api-type, routing-processed-path, response-id for backend path building
+        - set-target-backend-pool fragment: Uses requestedModel, apiTypeOverrideBackend for routing
+        - set-backend-authorization fragment: Respects skipBackendUrlRewrite to skip URL rewriting
+        - set-llm-usage fragment: Uses requestedModel for metrics
+        - validate-model-access fragment: Uses requestedModel for access check
+        - set-response-headers fragment: Uses routing information for debugging
+
+        Upstream Dependencies:
+        - central-cache-manager fragment: Provides config-api-types, config-models
+    -->
+
+    <!-- Remove API path prefix: /unified-ai/openai/chat/completions -> /openai/chat/completions -->
+    <set-variable name="routing-processed-path" value="@(context.Request.Url.Path.Replace(context.Api.Path, "").TrimStart('/').Insert(0, "/"))" />
+
+    <!-- Short-circuit for GET/DELETE requests (deployment listings, responses API) -->
+    <!-- These are handled by operation-level policies and don't need api-type routing -->
+    <choose>
+        <when condition="@(context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || context.Request.Method.Equals("DELETE", StringComparison.OrdinalIgnoreCase))">
+            <set-variable name="api-type" value="non-llm-operation" />
+            <set-variable name="requestedModel" value="non-llm-request" />
+            <set-variable name="response-id" value="" />
+            <set-variable name="selected-api-version" value="" />
+            <set-variable name="is-streaming" value="@(false)" />
+            <trace source="Request-Processor" severity="information">
+                <message>@($"Unified AI - Non-LLM request: {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "n/a")}")</message>
+            </trace>
+        </when>
+        <otherwise>
+            <!-- Determine API type from request path by matching against configured base-paths -->
+            <set-variable name="api-type" value="@{
+                try {
+                    var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty).ToLower();
+                    var match = context.Variables.GetValueOrDefault<JObject>("config-api-types")?.Children<JProperty>()
+                        .FirstOrDefault(a => {
+                            var basePath = a.Value["base-path"]?.ToString();
+                            return !String.IsNullOrEmpty(basePath) && path.Contains(basePath);
+                        });
+                    return match?.Name ?? String.Empty;
+                } catch { return String.Empty; }
+            }" />
+
+            <!-- Reject requests that don't match any configured API type base-path -->
+            <choose>
+                <when condition="@(String.IsNullOrEmpty(context.Variables.GetValueOrDefault<string>("api-type", String.Empty)))">
+                    <trace source="Request-Processor-Blocked" severity="error">
+                        <message>@($"Unified AI - Blocked request to {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "unknown")} from {context.Request.IpAddress}")</message>
+                    </trace>
+                    <return-response>
+                        <set-status code="403" reason="Forbidden" />
+                        <set-header name="Content-Type" exists-action="override">
+                            <value>application/json</value>
+                        </set-header>
+                        <set-body>{"error": {"code": "PathNotAllowed", "message": "The requested path is not allowed."}}</set-body>
+                    </return-response>
+                </when>
+            </choose>
+
+            <!-- Use API type to look up base path and path segment from metadata configuration -->
+            <set-variable name="api-type-config" value="@{
+        var apiType = context.Variables.GetValueOrDefault<string>("api-type", "openai");
+        return context.Variables.GetValueOrDefault<JObject>("config-api-types")?[apiType] as JObject;
+    }" />
+    <set-variable name="api-base-path" value="@(context.Variables.GetValueOrDefault<JObject>("api-type-config")?["base-path"]?.ToString() ?? "/openai")" />
+    <set-variable name="api-path-segment" value="@(context.Variables.GetValueOrDefault<JObject>("api-type-config")?["path-segment"]?.ToString() ?? String.Empty)" />
+
+    <!-- Set apiTypeOverrideBackend when api-type config defines an explicit backend (e.g., responses → responses-backend) -->
+    <!-- This tells set-target-backend-pool to bypass pool-based model matching and use this backend directly -->
+    <set-variable name="apiTypeOverrideBackend" value="@{
+        var apiTypeConfig = context.Variables.GetValueOrDefault<JObject>("api-type-config");
+        return apiTypeConfig?["backend"]?.ToString() ?? String.Empty;
+    }" />
+
+    <!-- Signal that path-builder handles URI construction — set-backend-authorization should skip URL rewriting -->
+    <set-variable name="skipBackendUrlRewrite" value="true" />
+
+    <!-- Parse request body for POST/PUT/PATCH methods -->
+    <choose>
+        <when condition="@(context.Request.Method == "GET" || context.Request.Method == "DELETE")">
+            <!-- No body for these methods -->
+        </when>
+        <otherwise>
+            <set-variable name="parsed-request-body" value="@{
+                try {
+                    return JObject.Parse(context.Request.Body.As<string>(preserveContent: true));
+                } catch {
+                    return new JObject();
+                }
+            }" />
+            <!-- Detect if request is streaming -->
+            <set-variable name="is-streaming" value="@{
+                var body = context.Variables.GetValueOrDefault<JObject>("parsed-request-body");
+                var streamValue = body?["stream"];
+                return streamValue != null && streamValue.Type == JTokenType.Boolean && streamValue.Value<bool>();
+            }" />
+        </otherwise>
+    </choose>
+
+    <!-- Extract model from request body or path, using 'requestedModel' for AI Hub Gateway compatibility -->
+    <set-variable name="requestedModel" value="@{
+        try {
+            var apiType = context.Variables.GetValueOrDefault<string>("api-type", "openai");
+            var method = context.Request.Method;
+
+            // GET requests are non-LLM operations (deployment listings, etc.)
+            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase))
+            {
+                return "non-llm-request";
+            }
+
+            // DELETE requests on responses API don't need a model
+            if (method.Equals("DELETE", StringComparison.OrdinalIgnoreCase) && apiType.StartsWith("responses"))
+            {
+                return "non-llm-request";
+            }
+
+            // Try body first (works for all API types)
+            var bodyModel = context.Variables.GetValueOrDefault<JObject>("parsed-request-body")?["model"]?.ToString();
+            if (!String.IsNullOrEmpty(bodyModel))
+            {
+                return bodyModel;
+            }
+
+            // Try path extraction using api-path-segment (e.g., /openai/deployments/{model}/...)
+            var segment = context.Variables.GetValueOrDefault<string>("api-path-segment", String.Empty);
+            if (!String.IsNullOrEmpty(segment))
+            {
+                var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty);
+                var idx = path.IndexOf(segment + "/", StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                {
+                    var afterSegment = path.Substring(idx + segment.Length + 1);
+                    var modelName = afterSegment.Split('/')[0];
+                    if (!String.IsNullOrEmpty(modelName))
+                    {
+                        return modelName;
+                    }
+                }
+            }
+        } catch { }
+        return String.Empty;
+    }" />
+
+    <!-- Validate that model parameter is present (skip for non-LLM requests) -->
+    <choose>
+        <when condition="@((string)context.Variables["requestedModel"] == "non-llm-request")">
+            <!-- Non-LLM request (e.g., GET operations like listing models) - skip model validation -->
+        </when>
+        <when condition="@(string.IsNullOrEmpty((string)context.Variables["requestedModel"]))">
+            <return-response>
+                <set-status code="400" reason="Bad Request" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-body>@{
+                    return new JObject(
+                        new JProperty("error", new JObject(
+                            new JProperty("message", "Model could not be detected from request body or path"),
+                            new JProperty("type", "invalid_request_error"),
+                            new JProperty("code", "missing_model_parameter"),
+                            new JProperty("param", "model")
+                        ))
+                    ).ToString();
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <!-- Determine response ID from request path (for responses API GET/DELETE operations) -->
+    <set-variable name="response-id" value="@{
+        var apiType = context.Variables.GetValueOrDefault<string>("api-type", "openai");
+        var method = context.Request.Method;
+        if (!apiType.StartsWith("responses") || (method != "GET" && method != "DELETE")) {
+            return String.Empty;
+        }
+        var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty);
+        return path.Substring(path.LastIndexOf('/') + 1);
+    }" />
+
+    <!-- Determine API version from model config or api-type config -->
+    <set-variable name="selected-api-version" value="@{
+        var apiType = context.Variables.GetValueOrDefault<string>("api-type", "openai");
+        var modelId = context.Variables.GetValueOrDefault<string>("requestedModel", "unknown");
+        var models = context.Variables.GetValueOrDefault<JObject>("config-models");
+        var apiTypeConfig = context.Variables.GetValueOrDefault<JObject>("api-type-config");
+
+        // Model-specific API versions
+        var modelConfig = models?[modelId];
+        if (modelConfig != null) {
+            if (apiType.Equals("inference", StringComparison.OrdinalIgnoreCase) && modelConfig["inferenceApiVersion"] != null) {
+                return modelConfig["inferenceApiVersion"].ToString();
+            }
+            if (apiType.Equals("openai", StringComparison.OrdinalIgnoreCase) && modelConfig["apiVersion"] != null) {
+                return modelConfig["apiVersion"].ToString();
+            }
+        }
+
+        // Fall back to api-type config version
+        var apiTypeVersion = apiTypeConfig?["api-version"]?.ToString();
+        if (!String.IsNullOrEmpty(apiTypeVersion)) {
+            return apiTypeVersion;
+        }
+
+        // Fallback defaults
+        return apiType.Equals("responses", StringComparison.OrdinalIgnoreCase) ? "2025-03-01-preview" : "2024-10-21";
+    }" />
+
+    <trace source="Request-Processor" severity="information">
+        <message>@($"Unified AI - Request processed: {context.Variables.GetValueOrDefault<string>("routing-processed-path", "n/a")} | API: {context.Variables.GetValueOrDefault<string>("api-type", "n/a")} | Model: {context.Variables.GetValueOrDefault<string>("requestedModel", "n/a")} | Streaming: {context.Variables.GetValueOrDefault<bool>("is-streaming", false)}")</message>
+    </trace>
+        </otherwise>
+    </choose>
+</fragment>

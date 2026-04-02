@@ -1,3 +1,0 @@
-            <when condition="@((string)context.Variables["requestedModel"] == "{{MODEL_NAME}}")">
-                <llm-token-limit counter-key="@(context.Subscription.Id + &quot;-&quot; + context.Variables[&quot;requestedModel&quot;])" tokens-per-minute="{{TPM}}" estimate-prompt-tokens="false" tokens-consumed-header-name="consumed-tokens" remaining-tokens-header-name="remaining-tokens" token-quota="{{QUOTA}}" token-quota-period="{{QUOTA_PERIOD}}" retry-after-header-name="retry-after" />
-            </when>

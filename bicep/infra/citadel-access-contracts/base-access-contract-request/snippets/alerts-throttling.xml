@@ -1,5 +1,0 @@
-        <!-- Alerts - Raise throttling events for Application Insights monitoring -->
-        <set-variable name="productName" value="@(context.Product?.Name?.ToString() ?? "Portal-Admin")" />
-        <set-variable name="deploymentName" value="@((string)context.Variables.GetValueOrDefault<string>("requestedModel", "DefaultModel"))" />
-        <set-variable name="appId" value="@((string)context.Variables.GetValueOrDefault<string>("appId", context.Subscription?.Id ?? "Portal-Admin-Sub"))" />
-        <include-fragment fragment-id="raise-throttling-events" />

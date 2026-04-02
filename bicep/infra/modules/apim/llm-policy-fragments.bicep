@@ -67,6 +67,26 @@ var setBackendPoolsFragmentXml = loadTextContent('./policies/frag-set-backend-po
 var updatedSetBackendPoolsFragmentXml = replace(setBackendPoolsFragmentXml, '//{backendPoolsCode}', backendPoolsCode)
 
 /**
+ * Generate metadata-config fragment for the Unified AI API
+ * Maps each model to its backend pool/direct backend + apiVersion + timeout
+ */
+
+// Build model-to-pool/backend mapping: for each model, find which pool or direct backend serves it
+// Uses the same allPools array that the backend-pools fragment uses
+var metadataModelsResult = reduce(llmBackendConfig, { code: '', seenModels: [] }, (acc, config) =>
+  reduce(config.supportedModels, acc, (modelAcc, model) => {
+    // Find the pool/backend name for this model from allPools
+    code: contains(modelAcc.seenModels, model.name) ? modelAcc.code : '${modelAcc.code}${length(modelAcc.seenModels) > 0 ? ',\n' : ''}\t\t\t\'${model.name}\': {\n\t\t\t\t\'backend\': \'${reduce(allPools, '', (poolAcc, pool) => contains(pool.supportedModels, model.name) ? pool.poolName : poolAcc)}\',\n\t\t\t\t\'apiVersion\': \'${model.?apiVersion ?? '2024-02-15-preview'}\',\n\t\t\t\t\'timeout\': ${model.?timeout ?? 120}${!empty(model.?inferenceApiVersion) ? ',\n\t\t\t\t\'inferenceApiVersion\': \'${model.inferenceApiVersion}\'' : ''}\n\t\t\t}'
+    seenModels: contains(modelAcc.seenModels, model.name) ? modelAcc.seenModels : union(modelAcc.seenModels, [model.name])
+  })
+)
+
+var metadataModelsCode = metadataModelsResult.code
+
+var metadataConfigFragmentXml = loadTextContent('./policies/frag-metadata-config.xml')
+var updatedMetadataConfigFragmentXml = replace(metadataConfigFragmentXml, '//{modelsConfigCode}', metadataModelsCode)
+
+/**
  * Enhanced authorization fragment that supports multiple backend types
  */
 var setBackendAuthorizationFragmentXml = loadTextContent('./policies/frag-set-backend-authorization.xml')
@@ -181,6 +201,20 @@ resource validateModelAccessFragment 'Microsoft.ApiManagement/service/policyFrag
   }
 }
 
+/**
+ * Policy Fragment: Metadata Configuration
+ * Provides centralized configuration for the Unified AI API with dynamically generated model mappings
+ */
+resource metadataConfigFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  parent: apimService
+  name: 'metadata-config'
+  properties: {
+    description: 'Dynamically generated metadata configuration for Unified AI API routing'
+    value: updatedMetadataConfigFragmentXml
+    format: 'rawxml'
+  }
+}
+
 // ------------------
 //    OUTPUTS
 // ------------------
@@ -199,6 +233,9 @@ output getAvailableModelsFragmentName string = getAvailableModelsFragment.name
 
 @description('Name of the validate-model-access fragment')
 output validateModelAccessFragmentName string = validateModelAccessFragment.name
+
+@description('Name of the metadata-config fragment')
+output metadataConfigFragmentName string = metadataConfigFragment.name
 
 @description('Generated backend pools configuration code')
 output backendPoolsCode string = backendPoolsCode

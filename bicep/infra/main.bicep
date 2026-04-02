@@ -278,7 +278,7 @@ param enableOpenAIRealtime bool = true
 param enableAIFoundry bool = true
 
 @description('Enable Microsoft Entra ID authentication for API Management.')
-param entraAuth bool = false
+param entraAuth bool = true
 
 @description('Enable API Center for API governance and discovery.')
 param enableAPICenter bool = true
@@ -459,6 +459,9 @@ param aiFoundryInstances array = [
   - sku: SKU name for the deployment, e.g., 'GlobalStandard', 'Standard'
   - capacity: Capacity/TPM quota
   - retirementDate: (Optional) Retirement date for the model in YYYY-MM-DD format
+  - apiVersion: (Optional) API version for OpenAI-type backend requests (default: '2024-02-15-preview')
+  - timeout: (Optional) Request timeout in seconds (default: 120)
+  - inferenceApiVersion: (Optional) API version for inference-type requests (e.g., '2024-05-01-preview' for non-OpenAI models)
   - aiserviceIndex: (Optional) Index of the AI Foundry instance to deploy to. Leave empty to deploy to all instances
   '''
 })
@@ -546,11 +549,18 @@ param primaryFoundryEmbeddingModelName string = 'text-embedding-3-large'
 @description('Microsoft Entra ID tenant ID for authentication (only used when entraAuth is true).')
 param entraTenantId string = ''
 
-@description('Microsoft Entra ID client ID for authentication (only used when entraAuth is true).')
+@description('Microsoft Entra ID client ID for authentication (only used when entraAuth is true). If empty and entraAuth is true, an app registration will be auto-provisioned.')
 param entraClientId string = ''
 
 @description('Audience value for Microsoft Entra ID authentication (only used when entraAuth is true).')
-param entraAudience string = '' 
+param entraAudience string = ''
+
+@secure()
+@description('Entra ID client secret for the app registration (only used when entraAuth is true with a pre-existing app registration, i.e., entraClientId is provided). When auto-provisioning, the secret is stored in Key Vault automatically by the entra-id module.')
+param entraClientSecret string = ''
+
+@description('Enable the Unified AI Wildcard API (3rd API alongside Azure OpenAI and Universal LLM)')
+param enableUnifiedAiApi bool = true
 
 // Load abbreviations from JSON file
 var abbrs = loadJsonContent('./abbreviations.json')
@@ -570,14 +580,17 @@ var transformedAiFoundryModelsConfig = [for model in aiFoundryModelsConfig: unio
 // Each model now includes full metadata: name, sku, capacity, modelFormat, modelVersion, retirementDate
 var modelsGroupedByInstance = [for (instance, i) in aiFoundryInstances: {
   instanceIndex: i
-  models: filter(map(aiFoundryModelsConfig, model => contains(model, 'aiserviceIndex') && model.aiserviceIndex == i ? {
+  models: filter(map(aiFoundryModelsConfig, model => contains(model, 'aiserviceIndex') && model.aiserviceIndex == i ? union({
     name: model.name
     sku: model.sku
     capacity: model.capacity
     modelFormat: model.publisher
     modelVersion: model.version
     retirementDate: model.?retirementDate ?? ''
-  } : {}), m => !empty(m))
+  }, !empty(model.?apiVersion) ? { apiVersion: model.apiVersion } : {},
+     !empty(model.?inferenceApiVersion) ? { inferenceApiVersion: model.inferenceApiVersion } : {},
+     contains(model, 'timeout') ? { timeout: model.timeout } : {}
+  ) : {}), m => !empty(m))
 }]
 
 /**
@@ -600,6 +613,9 @@ var modelsGroupedByInstance = [for (instance, i) in aiFoundryInstances: {
  *     - modelFormat: Model format identifier, e.g., 'OpenAI', 'DeepSeek', 'Microsoft' (default: 'OpenAI')
  *     - modelVersion: Version of the model (default: '1')
  *     - retirementDate: (Optional) Retirement date for the model in YYYY-MM-DD format
+ *     - apiVersion: (Optional) API version for OpenAI-type requests (default: '2024-02-15-preview')
+ *     - timeout: (Optional) Request timeout in seconds (default: 120)
+ *     - inferenceApiVersion: (Optional) API version for inference-type requests
  * - priority: (Optional) 1-5, default 1 (lower = higher priority)
  * - weight: (Optional) 1-1000, default 100 (higher = more traffic)
  * 
@@ -608,7 +624,7 @@ var modelsGroupedByInstance = [for (instance, i) in aiFoundryInstances: {
 
  var llmBackendConfig array = [
   // AI Foundry Instance 0 - Location: location (parameter)
-  // Models: gpt-4o-mini, gpt-4o, DeepSeek-R1, Phi-4
+  // Models: gpt-4o-mini, gpt-4o, gpt-4.1, DeepSeek-R1, Phi-4
   {
     backendId: 'aif-REPLACE-0'
     backendType: 'ai-foundry'
@@ -617,8 +633,9 @@ var modelsGroupedByInstance = [for (instance, i) in aiFoundryInstances: {
     supportedModels: [
       { name: 'gpt-4o-mini', sku: 'GlobalStandard', capacity: 100, modelFormat: 'OpenAI', modelVersion: '2024-07-18', retirementDate: '2026-09-30' }
       { name: 'gpt-4o', sku: 'GlobalStandard', capacity: 100, modelFormat: 'OpenAI', modelVersion: '2024-11-20', retirementDate: '2026-09-30' }
-      { name: 'DeepSeek-R1', sku: 'GlobalStandard', capacity: 1, modelFormat: 'DeepSeek', modelVersion: '1', retirementDate: '2099-12-30' }
-      { name: 'Phi-4', sku: 'GlobalStandard', capacity: 1, modelFormat: 'Microsoft', modelVersion: '3', retirementDate: '2099-12-30' }
+      { name: 'gpt-4.1', sku: 'GlobalStandard', capacity: 100, modelFormat: 'OpenAI', modelVersion: '2025-04-14', retirementDate: '2026-10-14', apiVersion: '2025-04-01-preview', timeout: 180 }
+      { name: 'DeepSeek-R1', sku: 'GlobalStandard', capacity: 1, modelFormat: 'DeepSeek', modelVersion: '1', retirementDate: '2099-12-30', inferenceApiVersion: '2024-05-01-preview' }
+      { name: 'Phi-4', sku: 'GlobalStandard', capacity: 1, modelFormat: 'Microsoft', modelVersion: '3', retirementDate: '2099-12-30', inferenceApiVersion: '2024-05-01-preview' }
     ]
     priority: 1
     weight: 100
@@ -632,7 +649,7 @@ var modelsGroupedByInstance = [for (instance, i) in aiFoundryInstances: {
     authScheme: 'managedIdentity'
     supportedModels: [
       { name: 'gpt-5', sku: 'GlobalStandard', capacity: 100, modelFormat: 'OpenAI', modelVersion: '2025-08-07', retirementDate: '2027-02-05' }
-      { name: 'DeepSeek-R1', sku: 'GlobalStandard', capacity: 1, modelFormat: 'DeepSeek', modelVersion: '1', retirementDate: '2099-12-30' }
+      { name: 'DeepSeek-R1', sku: 'GlobalStandard', capacity: 1, modelFormat: 'DeepSeek', modelVersion: '1', retirementDate: '2099-12-30', inferenceApiVersion: '2024-05-01-preview' }
     ]
     priority: 1
     weight: 100
@@ -974,6 +991,31 @@ module managedRedis './modules/redis/redis.bicep' = if (enableManagedRedis) {
   }
 }
 
+// ============================================================================
+// ENTRA ID CONFIGURATION
+// ============================================================================
+// Entra ID App Registration is created independently by the entra-id-setup script
+// (bicep/infra/entra-id-setup/setup.ps1) which stores values as azd environment
+// variables. These values flow through main.bicepparam -> parameters here.
+// For bring-your-own app registrations, set the values directly via azd env set.
+// See: bicep/infra/entra-id-setup/README.md
+
+var resolvedEntraTenantId = !empty(entraTenantId) ? entraTenantId : subscription().tenantId
+var resolvedEntraClientId = !empty(entraClientId) ? entraClientId : 'not-configured'
+var resolvedEntraAudience = !empty(entraAudience) ? entraAudience : (entraAuth ? 'api://${resolvedEntraClientId}' : 'https://cognitiveservices.azure.com/.default')
+
+// Store client secret in Key Vault when provided via parameter (for BYOA scenarios
+// where the secret isn't already in Key Vault from the entra-id-setup script)
+module entraClientSecretKv './modules/keyvault/keyvault-secret.bicep' = if (entraAuth && !empty(entraClientSecret)) {
+  name: 'entra-client-secret-kv'
+  scope: resourceGroup
+  params: {
+    keyVaultName: keyVault.outputs.keyVaultName
+    secretName: 'ENTRA-APP-CLIENT-SECRET'
+    secretValue: entraClientSecret
+  }
+}
+
 module apim './modules/apim/apim.bicep' = {
   name: 'apim'
   scope: resourceGroup
@@ -984,9 +1026,9 @@ module apim './modules/apim/apim.bicep' = {
     applicationInsightsName: monitoring.outputs.apimApplicationInsightsName
     managedIdentityName: apimManagedIdentity.outputs.managedIdentityName
     entraAuth: entraAuth
-    clientAppId: entraAuth ? entraClientId : null 
-    tenantId: entraAuth ? entraTenantId : null
-    audience: entraAuth ? entraAudience : null
+    clientAppId: resolvedEntraClientId
+    tenantId: resolvedEntraTenantId
+    audience: resolvedEntraAudience
     eventHubName: eventHub.outputs.eventHubName
     eventHubEndpoint: eventHub.outputs.eventHubEndpoint
     eventHubPIIName: eventHub.outputs.eventHubPIIName
@@ -1022,7 +1064,10 @@ module apim './modules/apim/apim.bicep' = {
     apiCenterWorkspaceName: enableAPICenter ? apiCenter.outputs.defaultWorkspaceName : 'default'
     azureMonitorLogSettings: azureMonitorLogSettings
     appInsightsLogSettings: appInsightsLogSettings
-
+    enableUnifiedAiApi: enableUnifiedAiApi
+    enableJwtAuth: entraAuth
+    jwtTenantId: resolvedEntraTenantId
+    jwtAppRegistrationId: resolvedEntraClientId
   }
 }
 
@@ -1134,7 +1179,12 @@ module keyVaultFoundryRbac './modules/keyvault/keyvault-rbac.bicep' = if(enableA
 output APIM_NAME string = apim.outputs.apimName
 output APIM_AOI_PATH string = apim.outputs.apimOpenaiApiPath
 output APIM_GATEWAY_URL string = apim.outputs.apimGatewayUrl
+output AZURE_RESOURCE_GROUP string = resourceGroup.name
 output AI_FOUNDRY_SERVICES array = enableAIFoundry ? foundry!.outputs.extendedAIServicesConfig : []
 output LLM_BACKEND_CONFIG array = llmBackendConfig
 output KEY_VAULT_NAME string = keyVault.outputs.keyVaultName
 output KEY_VAULT_URI string = keyVault.outputs.keyVaultUri
+output ENTRA_AUTH_ENABLED bool = entraAuth
+output ENTRA_CLIENT_ID string = resolvedEntraClientId
+output ENTRA_TENANT_ID string = resolvedEntraTenantId
+output ENTRA_AUDIENCE string = resolvedEntraAudience

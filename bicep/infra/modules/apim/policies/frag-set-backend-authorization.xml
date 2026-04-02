@@ -1,59 +1,69 @@
 <fragment>
     <!--
         Fragment: Set Target Authorization
-        Purpose: Configures authentication headers and URL rewriting based on backend pool type
+        Purpose: Configures authentication headers and URL rewriting based on backend pool type.
+                 When skipBackendUrlRewrite is set (by request-processor for Unified AI API),
+                 URL rewriting is skipped because path-builder handles URI construction instead.
         
         Expected Input Variables:
         - targetPoolType: The type of the target backend pool (e.g., "azure-openai", "ai-foundry")
         - targetBackendPool: The selected backend pool name
         - requestedModel: The model name extracted from the request payload
+        - skipBackendUrlRewrite (optional): When set, skips URL rewriting (path-builder handles it)
         
         Expected Named Values:
         - uami-client-id: User-assigned managed identity client ID for authentication
         
         Side Effects:
         - Sets Authorization header with managed identity token
-        - Rewrites request URL for Azure OpenAI to include deployment path
+        - Rewrites request URL for Azure OpenAI to include deployment path (unless skipBackendUrlRewrite)
         - Sets backend service to the target backend pool
     -->
     
     <!-- Configure authentication and URL rewriting based on backend pool type -->
     <choose>
-        <when condition="@(((string)context.Variables["targetPoolType"]) == "non-llm-request")">
+        <when condition="@(context.Variables.GetValueOrDefault<string>("targetPoolType", "") == "non-llm-request")">
             <!-- Non-LLM request (e.g., GET operations like listing models) -->
             <!-- Skip authentication and URL rewriting - request will be handled by operation-specific policy -->
         </when>
-        <when condition="@(((string)context.Variables["targetPoolType"]) == "azure-openai")">
+        <when condition="@(context.Variables.GetValueOrDefault<string>("targetPoolType", "") == "azure-openai")">
             <!-- Azure OpenAI: Use managed identity authentication with Cognitive Services resource -->
             <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="msi-access-token" client-id="{{uami-client-id}}" ignore-error="false" />
             <set-header name="Authorization" exists-action="override">
                 <value>@("Bearer " + (string)context.Variables["msi-access-token"])</value>
             </set-header>
             
-            <!-- Rewrite URL to inject /openai/deployments/{deployment}/ prefix while preserving the original API path -->
-            <set-variable name="rewriteTemplate" value="@{
-                string requestedModel = (string)context.Variables["requestedModel"];
-                string path = context.Request.Url.Path.TrimStart('/');
-                return string.Format("openai/deployments/{0}/{1}", requestedModel, path);
-            }" />
-            <rewrite-uri template="@((string)context.Variables["rewriteTemplate"])" copy-unmatched-params="true" />
+            <!-- Rewrite URL to inject /openai/deployments/{deployment}/ prefix (skip when path-builder handles it) -->
+            <choose>
+                <when condition="@(!context.Variables.ContainsKey("skipBackendUrlRewrite"))">
+                    <set-variable name="rewriteTemplate" value="@{
+                        string requestedModel = (string)context.Variables["requestedModel"];
+                        string path = context.Request.Url.Path.TrimStart('/');
+                        return string.Format("openai/deployments/{0}/{1}", requestedModel, path);
+                    }" />
+                    <rewrite-uri template="@((string)context.Variables["rewriteTemplate"])" copy-unmatched-params="true" />
+                </when>
+            </choose>
         </when>
-        <when condition="@(((string)context.Variables["targetPoolType"]) == "ai-foundry")">
+        <when condition="@(context.Variables.GetValueOrDefault<string>("targetPoolType", "") == "ai-foundry")">
             <!-- AI Foundry: Use managed identity authentication with Cognitive Services resource -->
-            <!-- No URL rewriting needed - AI Foundry uses standard OpenAI-compatible paths -->
             <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="msi-access-token" client-id="{{uami-client-id}}" ignore-error="false" />
             <set-header name="Authorization" exists-action="override">
                 <value>@("Bearer " + (string)context.Variables["msi-access-token"])</value>
             </set-header>
 
-             <!-- Rewrite URL to /models/{original-api-path} format for AI Foundry -->
-            <set-variable name="rewriteTemplate" value="@{
-                string path = context.Request.Url.Path.TrimStart('/');
-                return string.Format("models/{0}", path);
-            }" />
-            <rewrite-uri template="@((string)context.Variables["rewriteTemplate"])" copy-unmatched-params="true" />
+            <!-- Rewrite URL to /models/{original-api-path} format (skip when path-builder handles it) -->
+            <choose>
+                <when condition="@(!context.Variables.ContainsKey("skipBackendUrlRewrite"))">
+                    <set-variable name="rewriteTemplate" value="@{
+                        string path = context.Request.Url.Path.TrimStart('/');
+                        return string.Format("models/{0}", path);
+                    }" />
+                    <rewrite-uri template="@((string)context.Variables["rewriteTemplate"])" copy-unmatched-params="true" />
+                </when>
+            </choose>
         </when>
-        <when condition="@(((string)context.Variables["targetPoolType"]) == "external")">
+        <when condition="@(context.Variables.GetValueOrDefault<string>("targetPoolType", "") == "external")">
             <!-- External LLM Provider: Authentication handled by backend credentials configuration -->
             <!-- No URL rewriting or additional headers needed -->
         </when>
@@ -68,8 +78,8 @@
     
     <!-- Route request to the selected backend pool (skip for non-LLM requests) -->
     <choose>
-        <when condition="@((string)context.Variables["targetBackendPool"] != "non-llm-request")">
-            <set-backend-service backend-id="@((string)context.Variables["targetBackendPool"])" />
+        <when condition="@(context.Variables.GetValueOrDefault<string>("targetBackendPool", "") != "non-llm-request")">
+            <set-backend-service backend-id="@(context.Variables.GetValueOrDefault<string>("targetBackendPool", ""))" />
         </when>
     </choose>
 </fragment>

@@ -193,9 +193,59 @@ Based on this policy, you can configure alerts in Application Insights to monito
 >NOTE: Detailed guide on how to setup throttling events handling can be found in [Throttling Events Handling Guide](./throttling-events-handling.md)
 
 
+### Response Headers Policy
+
+The `set-response-headers` policy fragment injects `UAIG-*` response headers that expose internal gateway state for debugging and observability. These headers help trace request processing through the gateway, including authentication context, model routing, backend selection, and cache operations.
+
+**By default, response headers are disabled.** To enable them for a specific product, set the `enableResponseHeaders` variable to `true` in the product policy inbound section.
+
+**Basic Usage:**
+
+```xml
+<inbound>
+    <base />
+    <!-- Enable advanced response headers for debugging -->
+    <set-variable name="enableResponseHeaders" value="@(true)" />
+</inbound>
+```
+
+**Headers Returned (when enabled):**
+
+| Header | Source Variable | Description |
+|--------|----------------|-------------|
+| `UAIG-Auth-Type` | `auth-type` | Authentication method (`api-key`, `jwt`, `api-key-jwt`, `none`) |
+| `UAIG-User-Id` | `user-id` | Authenticated user identifier |
+| `UAIG-Subscription` | `subscription-name` | APIM subscription name |
+| `UAIG-Model-Id` | `requestedModel` | Requested LLM model name |
+| `UAIG-API-Type` | `api-type` | Detected API type (e.g., `azure-openai`, `universal-llm`) |
+| `UAIG-Processed-Path` | `routing-processed-path` | Processed request path used for routing |
+| `UAIG-API-Version` | `selected-api-version` | Selected API version |
+| `UAIG-Is-Streaming` | `is-streaming` | Whether the request is a streaming request |
+| `UAIG-Backend` | `selected-backend` | Selected backend pool |
+| `UAIG-Final-Path` | `finalPath` | Final backend path after rewriting |
+| `UAIG-Cache-Operation` | `cache-operation` | Cache operation performed (hit/miss/skip) |
+| `UAIG-Request-Id` | — | APIM request correlation ID |
+| `UAIG-Gateway-Region` | — | Azure region of the APIM gateway |
+
+**How It Works:**
+
+1. The `set-response-headers` fragment is included in the outbound and on-error sections of all three API policies (Azure OpenAI, Universal LLM, Unified AI)
+2. The fragment checks the `enableResponseHeaders` variable — if not set or `false`, no headers are injected
+3. When enabled via a product policy, the fragment adds all `UAIG-*` headers to the response using values set by upstream fragments during request processing
+
+**Configuration Options:**
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `enableResponseHeaders` | bool | `false` | Set to `@(true)` to enable response header injection |
+
+>**NOTE:** Response headers expose internal gateway state and should only be enabled for development/debugging products. Avoid enabling them in production access contracts to prevent leaking internal routing details to clients.
+
 ### Content Safety Policy
 
 Content safety can be enforced at a gateway level using the built-in content safety policy. You can configure the content safety policy to block or flag content based on your organization's requirements.
+
+>NOTE: Content Safety has a context input limit of **10K** characters. If the content to be evaluated exceeds this limit, the policy will return a 413 Payload Too Large error. To handle this, you can set up a custom policy to split longer input content before passing it to the content safety policy.
 
 ```xml
 <inbound>
@@ -212,9 +262,239 @@ Content safety can be enforced at a gateway level using the built-in content saf
 </inbound>
 ```
 
-### OAuth JWT Validation Policy
+### JWT Authentication Policy
 
-TBD
+JWT (JSON Web Token) authentication adds a second security layer on top of subscription API keys. When enabled for a product, clients must provide both an `api-key` header and an `Authorization: Bearer {token}` header.
+
+JWT validation is handled by the unified `security-handler` policy fragment, which is included in **all three API endpoints** (Azure OpenAI API, Universal LLM API, and Unified AI API). The fragment validates the token's audience, issuer, signature, and expiry against either gateway-level APIM named values or per-product custom overrides.
+
+> **Full JWT setup guide:** See [JWT Authentication Guide](../../../guides/entraid-auth-validation.md) for gateway-level configuration.
+> **Client identity & permissions:** See [JWT Client Identity and Permissions Guide](../../../guides/jwt-client-identity-permissions.md) for configuring client applications to acquire tokens.
+
+**Prerequisites:**
+- APIM named values configured: `JWT-TenantId`, `JWT-AppRegistrationId`, `JWT-Issuer`, `JWT-OpenIdConfigUrl`
+- For Microsoft Entra ID: Run the `bicep/infra/entra-id-setup` module to auto-provision app registration and named values
+- For other identity providers: Manually configure the APIM named values or use per-product custom overrides
+
+**APIM Named Values for JWT Configuration:**
+
+| Named Value | Description | Example (Entra ID) | Example (Auth0) |
+|-------------|-------------|---------------------|-----------------|
+| `JWT-OpenIdConfigUrl` | OpenID Connect discovery endpoint | `https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration` | `https://{domain}/.well-known/openid-configuration` |
+| `JWT-Issuer` | Expected token issuer | `https://login.microsoftonline.com/{tenant}/v2.0` | `https://{domain}/` |
+| `JWT-AppRegistrationId` | Expected audience claim | `api://{client-id}` | `https://your-api-identifier` |
+
+**Basic Usage - Enable JWT with Gateway Defaults:**
+
+```xml
+<inbound>
+    <base />
+    <!-- Enable JWT requirement for this product -->
+    <set-variable name="jwtRequired" value="true" />
+    
+    <!-- Other policies (model access, capacity, etc.) -->
+</inbound>
+```
+
+**Advanced Usage - Enable JWT with Custom Identity Provider:**
+
+Access contracts can override the gateway's default JWT settings by setting custom variables. The `security-handler` checks for these overrides first, then falls back to the APIM named values if not set.
+
+| Variable | Description | Falls back to Named Value |
+|----------|-------------|---------------------------|
+| `jwtAudience` | Custom audience claim to validate | `JWT-AppRegistrationId` |
+| `jwtIssuer` | Custom token issuer to validate | `JWT-Issuer` |
+| `jwtOpenIdConfigUrl` | Custom OpenID Connect discovery URL | `JWT-OpenIdConfigUrl` |
+
+```xml
+<inbound>
+    <base />
+    <!-- Enable JWT requirement -->
+    <set-variable name="jwtRequired" value="true" />
+    
+    <!-- Override JWT settings for a different identity provider (e.g., Auth0, Okta, separate Entra tenant) -->
+    <set-variable name="jwtAudience" value="https://my-custom-api-audience" />
+    <set-variable name="jwtIssuer" value="https://my-idp.example.com/" />
+    <set-variable name="jwtOpenIdConfigUrl" value="https://my-idp.example.com/.well-known/openid-configuration" />
+    
+    <!-- Other policies (model access, capacity, etc.) -->
+</inbound>
+```
+
+You can override any combination of settings — unset variables fall back to the gateway defaults:
+
+```xml
+<inbound>
+    <base />
+    <set-variable name="jwtRequired" value="true" />
+    
+    <!-- Only override audience (issuer and OpenID config use gateway defaults) -->
+    <set-variable name="jwtAudience" value="api://custom-audience-for-this-product" />
+</inbound>
+```
+
+**How It Works:**
+
+1. The `security-handler` fragment (included in the API-level policy via `<base />`) detects the authentication method:
+   - `api-key` — only subscription key provided
+   - `jwt` — only Bearer token provided
+   - `api-key-jwt` — both provided
+   - `none` — neither provided
+
+2. API key is always validated first (APIM subscription validation)
+
+3. If `jwtRequired` is `"true"` (set by product policy), JWT validation is enforced:
+   - Token is validated against the OpenID Connect configuration endpoint
+   - Audience, issuer, and signature are verified
+   - User identity is extracted from the `azp` claim (client credentials flow)
+   - Custom overrides (`jwtAudience`, `jwtIssuer`, `jwtOpenIdConfigUrl`) are used if set, otherwise APIM named values apply
+
+4. If a Bearer token is provided but `jwtRequired` is not set, the token is still validated (opportunistic validation)
+
+5. This behavior is **uniform across all three API endpoints** — the same `security-handler` fragment executes regardless of whether the request arrives via Azure OpenAI, Universal LLM, or Unified AI API
+
+**Output Variables Set by Security Handler:**
+
+| Variable | Description | Example Values |
+|----------|-------------|----------------|
+| `auth-type` | Authentication method detected | `"api-key"`, `"jwt"`, `"api-key-jwt"`, `"none"` |
+| `subscription-name` | APIM subscription name | `"LLM-HR-ChatAgent-DEV-SUB-01"` |
+| `user-id` | User identifier (from JWT or subscription) | `"app-client-id"` or `"subscription-name"` |
+
+**Error Responses:**
+
+| Scenario | HTTP Status | Error Code | Message |
+|----------|-------------|------------|----------|
+| No API key | 401 | `unauthorized` | Access denied. A valid API key is required. |
+| JWT required but missing | 401 | `jwt_required` | JWT Bearer token is required for this product. |
+| Invalid JWT token | 401 | — | Access denied due to invalid or expired JWT bearer token. |
+| JWT config missing | 503 | `jwt_not_configured` | JWT authentication is not configured properly on the gateway. |
+
+**Token Acquisition (Client Credentials Flow - Entra ID):**
+
+```http
+POST https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+&client_id={entra-app-client-id}
+&client_secret={entra-app-client-secret}
+&scope={audience}/.default
+```
+
+**Combining JWT with Other Policies:**
+
+JWT authentication works alongside all other access contract policies like model access control and capacity management.
+
+> **NOTE:** The `jwtRequired` variable must be set within the product policy inbound section. The `security-handler` fragment reads this variable during API-level policy execution.
+
+### App Role Authorization Policy
+
+App role authorization adds fine-grained access control on top of JWT authentication. When enabled for a product, the `security-handler` fragment checks that the JWT token contains at least one of the required app roles in the `roles` claim. This is enforced **after** JWT validation, so the token must first pass audience, issuer, and signature checks.
+
+The gateway's Entra ID app registration defines the following app roles (provisioned by `entra-id-setup/setup.ps1`):
+
+| App Role | Value | Description |
+|----------|-------|-------------|
+| ReadWrite | `Task.ReadWrite` | Full read and write access to all gateway capabilities |
+| Models.Read | `Models.Read` | Access to LLM model endpoints (chat completions, embeddings) |
+| MCP.Read | `MCP.Read` | Access to MCP tool endpoints |
+| Agent.Read | `Agent.Read` | Access to agent endpoints |
+
+> **Full setup guides:**
+> - [JWT Authentication Guide](../../../guides/entraid-auth-validation.md) — Gateway-level configuration
+> - [JWT Client Identity and Permissions Guide](../../../guides/jwt-client-identity-permissions.md) — Assigning roles to client identities
+
+**Basic Usage — Require a Single Role:**
+
+```xml
+<inbound>
+    <base />
+    <!-- Enable JWT requirement -->
+    <set-variable name="jwtRequired" value="true" />
+
+    <!-- Require the Models.Read app role -->
+    <set-variable name="requiredRoles" value="Models.Read" />
+
+    <!-- Other policies (model access, capacity, etc.) -->
+</inbound>
+```
+
+**Multiple Roles (OR logic) — Any Matching Role Grants Access:**
+
+```xml
+<inbound>
+    <base />
+    <set-variable name="jwtRequired" value="true" />
+
+    <!-- Client must have at least one of these roles -->
+    <set-variable name="requiredRoles" value="Models.Read,Agent.Read" />
+</inbound>
+```
+
+**How It Works:**
+
+1. The `security-handler` fragment validates the JWT token (audience, issuer, signature, expiry)
+2. After successful JWT validation, the fragment extracts the `roles` claim from the token
+3. If `requiredRoles` is set by the product policy, the fragment checks if ANY of the required roles exist in the token's `roles` claim (case-insensitive OR match)
+4. If no matching role is found, the request is rejected with HTTP 403 Forbidden
+
+**Error Response Format:**
+
+When a required role is missing, the policy returns:
+
+```json
+{
+    "error": {
+        "message": "Access denied. Required app role not found in token.",
+        "code": "insufficient_role",
+        "required_roles": "Models.Read",
+        "token_roles": "Agent.Read"
+    }
+}
+```
+
+**Configuration Options:**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `requiredRoles` | Comma-separated list of accepted app roles (OR logic) | `"Models.Read"` or `"Models.Read,Agent.Read"` |
+
+> **NOTE:** The `requiredRoles` variable is opt-in. If not set or empty, no role check is performed — this ensures backward compatibility with existing access contracts that only use `jwtRequired`.
+
+**Output Variables Set by Security Handler:**
+
+| Variable | Description | Example Values |
+|----------|-------------|----------------|
+| `jwt-roles` | App roles extracted from the JWT token | `"Models.Read,Agent.Read"` or `""` |
+
+**Recommended Policy Ordering:**
+
+```xml
+<inbound>
+    <base />
+
+    <!-- 1. JWT Authentication -->
+    <set-variable name="jwtRequired" value="true" />
+
+    <!-- 2. App Role Authorization -->
+    <set-variable name="requiredRoles" value="Models.Read" />
+
+    <!-- 3. Model extraction and access control -->
+    <include-fragment fragment-id="set-llm-requested-model" />
+    <set-variable name="allowedModels" value="gpt-4o,gpt-4o-mini" />
+    <include-fragment fragment-id="validate-model-access" />
+
+    <!-- 4. Capacity management -->
+    <llm-token-limit counter-key="@(context.Subscription.Id)"
+        tokens-per-minute="5000"
+        estimate-prompt-tokens="false"
+        token-quota="100000"
+        token-quota-period="Monthly" />
+
+    <!-- 5. Content safety, PII, etc. -->
+</inbound>
+```
 
 ### PII Handling Policy
 

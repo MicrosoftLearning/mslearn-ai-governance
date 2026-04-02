@@ -11,6 +11,7 @@ This package eliminates manual APIM configuration by providing:
 - 🔐 **Flexible Secret Storage**: Optional Azure Key Vault integration or direct credential output
 - 🤖 **Azure Microsoft Foundry Integration**: Optional APIM connection creation for Foundry agents
 - 📝 **Declarative Configuration**: Simple `.bicepparam` & `.xml` files for version control per use case
+- 🔐 **JWT Authentication**: Optional layered API Key + JWT Bearer token authentication per product
 
 ## What Gets Created
 
@@ -99,6 +100,7 @@ Below is a suggested flow for client applications (i.e. agents) interacting with
 ```mermaid
 sequenceDiagram
     participant App as AI Agent/App
+    participant Entra as Microsoft Entra ID
     participant KV as Azure Key Vault
     participant Foundry as Microsoft Foundry
     participant APIM as AI Gateway
@@ -113,9 +115,18 @@ sequenceDiagram
     else Direct Credentials
         Note over App: Use credentials from deployment output
     end
+
+    opt JWT Authentication Enabled
+        App->>Entra: Request JWT token (client credentials)
+        Entra-->>App: Return Bearer token
+    end
     
-    App->>APIM: HTTPS request with api-key header
-    APIM->>APIM: Apply product policy
+    App->>APIM: HTTPS request with api-key + optional Bearer token
+    APIM->>APIM: Validate subscription key (always required)
+    APIM->>APIM: Apply product policy (check jwtRequired)
+    opt JWT Required by Product
+        APIM->>APIM: Validate JWT via security-handler fragment
+    end
     APIM->>AI: Forward to backend service
     AI-->>APIM: Response
     APIM->>APIM: Logs & metrics
@@ -151,18 +162,6 @@ citadel-access-contracts/
 │       └── prod/                       # Production environment
 │           ├── main.bicepparam
 │           └── ai-product-policy.xml
-└── samples/
-    ├── healthcare-chatbot/             # Sample: Healthcare AI
-    │   ├── dev/
-    │   │   ├── main.bicepparam         # Deployment parameters
-    │   │   └── ai-product-policy.xml   # Custom APIM policy
-    │   └── prod/
-    │       ├── main.bicepparam
-    │       └── ai-product-policy.xml
-    └── customer-support-agent/         # Sample: Support AI
-        └── dev/
-            ├── main.bicepparam
-            └── ai-product-policy.xml
 ```
 
 ---
@@ -180,6 +179,9 @@ citadel-access-contracts/
 | `apiNameMapping` | object | ✅ | Map service codes to API names | `{ OAI: ["azure-openai-service-api"], ... }` |
 | `services` | array | ✅ | Services to onboard | See [Services Schema](#services-schema) below |
 | `productTerms` | string | ❌ | Product terms of service | "By using this product..." |
+
+> **JWT Authentication**: JWT validation is configured per access contract via the `policies.jwtAuth.enabled` field in the Agent Access Contract Request JSON (see [Base Access Contract Request](#jwt-authentication-for-access-contracts)). When enabled, the product policy sets `jwtRequired=true`, and the `security-handler` fragment enforces JWT Bearer token validation in addition to the API key.
+
 | `useTargetFoundry` | bool | ❌ | Create Foundry connections (default: `false`) | `true` or `false` |
 | `foundry` | object | ❌* | Microsoft Foundry coordinates (*required if useTargetFoundry=true) | `{ subscriptionId, resourceGroupName, accountName, projectName }` |
 | `foundryConfig` | object | ❌ | Foundry connection configuration | See [Foundry Config](#foundry-configuration) below |
@@ -732,7 +734,116 @@ Write-Host "##vso[task.setvariable variable=OAI_KEY;issecret=true]$($oaiCreds.ap
 
 ---
 
-## 📞 Support
+## � JWT Authentication for Access Contracts
+
+Access Contracts support layered authentication: **API Key is always required**, with optional **JWT Bearer token** validation per product. This is configured during contract creation, not at deployment time.
+
+### Prerequisites
+
+- The Citadel Governance Hub must be deployed with `entraAuth=true` so that APIM JWT named values (`JWT-TenantId`, `JWT-AppRegistrationId`, `JWT-Issuer`, `JWT-OpenIdConfigUrl`) and the `security-handler` policy fragment are provisioned
+- An Entra ID App Registration exists (auto-provisioned by the `entra-id` Bicep module or provided manually)
+- Client secret is stored in Key Vault as `ENTRA-APP-CLIENT-SECRET`
+
+### How It Works
+
+1. The product policy snippet `jwt-auth.xml` sets `jwtRequired=true` in the APIM context
+2. The `security-handler` fragment detects the auth method (`api-key`, `jwt`, `api-key-jwt`)
+3. When `jwtRequired=true`, the fragment validates the JWT Bearer token against the Entra ID OpenID configuration
+4. Requests without a valid JWT are rejected with `401 Unauthorized`
+
+### Authentication Flow
+
+| Scenario | Headers Required | Result |
+|----------|-----------------|--------|
+| API Key only (JWT not enabled) | `api-key: {key}` | ✅ Allowed |
+| API Key + JWT (JWT enabled) | `api-key: {key}` + `Authorization: Bearer {token}` | ✅ Allowed |
+| API Key only (JWT enabled) | `api-key: {key}` | ❌ 401 - JWT required |
+| JWT only (no API Key) | `Authorization: Bearer {token}` | ❌ 401 - API key required |
+| Invalid JWT (JWT enabled) | `api-key: {key}` + `Authorization: Bearer {invalid}` | ❌ 401 - Invalid token |
+
+### Enabling JWT via Agent Access Contract Request
+
+When using the `base-access-contract-request` module, enable JWT in the contract JSON:
+
+```json
+{
+  "contractInfo": {
+    "businessUnit": "Security",
+    "useCaseName": "SecureAgent",
+    "environment": "DEV"
+  },
+  "policies": {
+    "jwtAuth": { "enabled": true },
+    "modelAccess": {
+      "enabled": true,
+      "allowedModels": ["gpt-4o", "gpt-4o-mini"]
+    }
+  },
+  "services": [
+    {
+      "code": "LLM",
+      "endpointSecretName": "SECURE-AGENT-ENDPOINT",
+      "apiKeySecretName": "SECURE-AGENT-KEY"
+    }
+  ]
+}
+```
+
+### Enabling JWT via Custom Product Policy
+
+For manual access contracts (not using the agent request module), add the JWT snippet to your product policy XML:
+
+```xml
+<policies>
+    <inbound>
+        <base />
+        <!-- Enable JWT requirement for this product -->
+        <set-variable name="jwtRequired" value="true" />
+        
+        <!-- Other policy snippets (model access, capacity, etc.) -->
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
+```
+
+### Acquiring a JWT Token
+
+Use the client credentials flow to obtain a JWT token from Microsoft Entra ID:
+
+```http
+POST https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+&client_id={entra-app-client-id}
+&client_secret={entra-app-client-secret}
+&scope={audience}/.default
+```
+
+Then include the token in API requests:
+
+```http
+POST https://{apim-gateway}/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-15-preview
+api-key: {subscription-key}
+Authorization: Bearer {jwt-token}
+Content-Type: application/json
+```
+
+### Validation
+
+Use the [JWT Access Contract Validation Notebook](../../../test/citadel-jwt-access-contract-tests.ipynb) to test end-to-end JWT authentication with access contracts.
+
+---
+
+## �📞 Support
 
 For issues or questions:
 - **GitHub Issues**: [Report bugs or request features](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/issues)

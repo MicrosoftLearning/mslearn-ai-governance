@@ -1,4 +1,0 @@
-                        new JObject {
-                            ["pattern"] = @"{{PATTERN}}",
-                            ["category"] = "{{CATEGORY}}"
-                        }

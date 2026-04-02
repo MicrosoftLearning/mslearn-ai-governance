@@ -124,13 +124,14 @@ param redisPublicNetworkAccess = readEnvironmentVariable('REDIS_PUBLIC_NETWORK_A
 param createAppInsightsDashboards = bool(readEnvironmentVariable('CREATE_DASHBOARDS', 'false'))
 param enableAIModelInference = bool(readEnvironmentVariable('ENABLE_AI_MODEL_INFERENCE', 'true'))
 param enableDocumentIntelligence = bool(readEnvironmentVariable('ENABLE_DOCUMENT_INTELLIGENCE', 'true'))
-param enableAzureAISearch = bool(readEnvironmentVariable('ENABLE_AZURE_AI_SEARCH', 'true'))
+param enableAzureAISearch = bool(readEnvironmentVariable('ENABLE_AZURE_AI_SEARCH', 'false'))
 param enableAIGatewayPiiRedaction = bool(readEnvironmentVariable('ENABLE_PII_REDACTION', 'true'))
 param enableOpenAIRealtime = bool(readEnvironmentVariable('ENABLE_OPENAI_REALTIME', 'true'))
 param enableAIFoundry = bool(readEnvironmentVariable('ENABLE_AI_FOUNDRY', 'true'))
 param entraAuth = bool(readEnvironmentVariable('AZURE_ENTRA_AUTH', 'false'))
-param enableAPICenter = bool(readEnvironmentVariable('ENABLE_API_CENTER', 'false'))
+param enableAPICenter = bool(readEnvironmentVariable('ENABLE_API_CENTER', 'true'))
 param enableManagedRedis = bool(readEnvironmentVariable('ENABLE_MANAGED_REDIS', 'true'))
+param enableUnifiedAiApi = bool(readEnvironmentVariable('ENABLE_UNIFIED_AI_API', 'true'))
 
 // ============================================================================
 // INFERENCE API DIAGNOSTIC LOG SETTINGS
@@ -203,6 +204,10 @@ param aiFoundryInstances = [
 ]
 
 // AI Foundry model deployments configuration
+// Each model can optionally include metadata for the Unified AI API routing:
+//   - apiVersion: API version for OpenAI-type requests (default: '2024-02-15-preview')
+//   - timeout: Request timeout in seconds (default: 120)
+//   - inferenceApiVersion: API version for inference-type requests (e.g., '2024-05-01-preview' for non-OpenAI models)
 param aiFoundryModelsConfig = [
   {
     name: 'gpt-4o-mini'
@@ -229,6 +234,8 @@ param aiFoundryModelsConfig = [
     sku: 'GlobalStandard'
     capacity: 100
     retirementDate: '2026-10-14'
+    apiVersion: '2025-04-01-preview'
+    timeout: 180
     aiserviceIndex: 0
   }
   {
@@ -238,15 +245,7 @@ param aiFoundryModelsConfig = [
     sku: 'GlobalStandard'
     capacity: 1
     retirementDate: '2099-12-30'
-    aiserviceIndex: 0
-  }
-  {
-    name: 'Phi-4'
-    publisher: 'Microsoft'
-    version: '3'
-    sku: 'GlobalStandard'
-    capacity: 1
-    retirementDate: '2099-12-30'
+    inferenceApiVersion: '2024-05-01-preview'
     aiserviceIndex: 0
   }
   {
@@ -259,9 +258,36 @@ param aiFoundryModelsConfig = [
     aiserviceIndex: 0
   }
   {
-    name: 'gpt-5'
+    name: 'Mistral-Large-3'
+    publisher: 'Mistral AI'
+    version: '1'
+    sku: 'GlobalStandard'
+    capacity: 100
+    retirementDate: '2099-12-30'
+    aiserviceIndex: 0
+  }
+  {
+    name: 'gpt-5.4-mini'
     publisher: 'OpenAI'
-    version: '2025-08-07'
+    version: '2026-03-17'
+    sku: 'GlobalStandard'
+    capacity: 100
+    retirementDate: '2026-09-30'
+    aiserviceIndex: 0
+  }
+  {
+    name: 'gpt-5.4-mini'
+    publisher: 'OpenAI'
+    version: '2026-03-17'
+    sku: 'GlobalStandard'
+    capacity: 100
+    retirementDate: '2026-09-30'
+    aiserviceIndex: 1
+  }
+  {
+    name: 'gpt-5.2'
+    publisher: 'OpenAI'
+    version: '2025-12-11'
     sku: 'GlobalStandard'
     capacity: 100
     retirementDate: '2027-02-05'
@@ -274,6 +300,7 @@ param aiFoundryModelsConfig = [
     sku: 'GlobalStandard'
     capacity: 1
     retirementDate: '2099-12-30'
+    inferenceApiVersion: '2024-05-01-preview'
     aiserviceIndex: 1
   }
   {
@@ -293,6 +320,10 @@ param primaryFoundryEmbeddingModelName = readEnvironmentVariable('PRIMARY_FOUNDR
 // ============================================================================
 // ENTRA ID AUTHENTICATION
 // ============================================================================
+// Values are populated by the entra-id-setup script (bicep/infra/entra-id-setup/setup.ps1)
+// which creates the App Registration and stores values as azd environment variables.
+// For bring-your-own app registrations, set these values directly via 'azd env set'.
 param entraTenantId = readEnvironmentVariable('AZURE_TENANT_ID', '')
 param entraClientId = readEnvironmentVariable('AZURE_CLIENT_ID', '')
 param entraAudience = readEnvironmentVariable('AZURE_AUDIENCE', '')
+param entraClientSecret = readEnvironmentVariable('ENTRA_CLIENT_SECRET', '')

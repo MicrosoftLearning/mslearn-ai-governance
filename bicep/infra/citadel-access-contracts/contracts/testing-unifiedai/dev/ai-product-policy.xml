@@ -1,0 +1,28 @@
+<policies>
+    <inbound>
+        <base />
+        <!-- Extract and validate model parameter from request -->
+        <include-fragment fragment-id="set-llm-requested-model" />
+
+        <!-- Setting allowed models to only the models defined in notebook parameters -->
+        <set-variable name="allowedModels" value="gpt-4o,Mistral-Large-3" />
+
+        <!-- Validate model access based on allowedModels -->
+        <include-fragment fragment-id="validate-model-access" />
+
+        <!-- Capacity management -->
+        <llm-token-limit counter-key="@(context.Subscription.Id)" tokens-per-minute="1000" estimate-prompt-tokens="false" token-quota="100000" token-quota-period="Monthly" />
+
+        <!-- Enable advanced response headers offered by set-response-headers fragment -->
+        <set-variable name="enableResponseHeaders" value="@(true)" />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

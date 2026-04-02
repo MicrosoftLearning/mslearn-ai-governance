@@ -22,7 +22,7 @@ The routing relies on APIM Policy Fragments to implement dynamic routing logic w
 Using policy fragments allows to keep the routing logic modular and reusable across multiple APIs.
 
 The fragments are:
-- `set-llm-requested-model`: Extracts the requested model from the request
+- `set-llm-requested-model`: Extracts the requested model from the request path or body
 - `set-backend-pools`: Loads backend pool configurations that include supported models by which backends
 - `set-target-backend-pool`: Matches the requested model to a backend pool
 - `set-backend-authorization`: Configures appropriate authentication for the target backend
@@ -85,24 +85,28 @@ The `set-llm-requested-model` policy fragment extracts the model from the reques
 
 | Source | Pattern | Example |
 |--------|---------|---------|
-| **GET Request** | Any GET operation | Returns `"non-llm-request"` (skips model extraction) |
-| **Request Body** | `{"model": "gpt-4o", ...}` | Universal LLM API |
-| **URL Path** | `/deployments/{deployment-id}/...` | Azure OpenAI API |
+| **GET/DELETE Request** | Any GET or DELETE operation | Returns `"non-llm-request"` (skips model extraction) |
+| **URL Path Parameter** | `/deployments/{deployment-id}/...` | Azure OpenAI API (named operations) |
+| **URL Path Segment** | `/openai/deployments/{model}/...` | Unified AI API (wildcard operations) |
+| **Request Body** | `{"model": "gpt-4o", ...}` | Universal LLM / Inference API |
 
-Purpose: Extracts the requested model from either Azure OpenAI endpoint or inference endpoint
+Purpose: Extracts the requested model from Azure OpenAI, Inference, or Unified AI endpoints
 
 **Supported Patterns:**
-1. **GET Requests**: Returns `"non-llm-request"` to skip model-based routing (used for operations like listing available models)
-2. Azure OpenAI: Model from deployment-id path parameter (/deployments/{deployment-id}/chat/completions)
-3. Inference Endpoint: Model from request body JSON ({"model": "model-name", ...})
+1. **GET/DELETE Requests**: Returns `"non-llm-request"` to skip model-based routing (used for operations like listing models or deleting responses)
+2. Azure OpenAI: Model from `deployment-id` path parameter (`/deployments/{deployment-id}/chat/completions`)
+3. Unified AI: Model from URL path by detecting `/deployments/{model}/` segment (wildcard operations where APIM has no named path parameters)
+4. Inference Endpoint: Model from request body JSON (`{"model": "model-name", ...}`)
 
 **Output Variable:**
-- requestedModel: The extracted model name, `"non-llm-request"` for GET operations, or empty string if not found
+- requestedModel: The extracted model name, `"non-llm-request"` for GET/DELETE operations, or empty string if not found
 
 Logic:
-- First attempts to extract from deployment-id path parameter (Azure OpenAI pattern)
-- If not found, attempts to extract from request body model field (Inference pattern)
-- Returns empty string if neither pattern matches
+- GET/DELETE requests return `"non-llm-request"` (no model routing needed)
+- First attempts to extract from `deployment-id` path parameter (Azure OpenAI named operations)
+- If not found, scans the URL path for `/deployments/{model}/` segment (Unified AI wildcard operations)
+- If not found, attempts to extract from request body `model` field (Inference pattern)
+- Returns empty string if no pattern matches
 
 ### Step 2: Backend Pool Configuration
 
@@ -295,7 +299,7 @@ The `set-llm-usage` fragment emits token metrics for monitoring:
 
 | Fragment | Purpose |
 |----------|---------|
-| `set-llm-requested-model` | Extracts model from request body or URL |
+| `set-llm-requested-model` | Extracts model from request body, URL path parameter, or URL path segment |
 | `set-backend-pools` | Loads backend pool configurations |
 | `set-target-backend-pool` | Matches model to backend pool with RBAC |
 | `set-backend-authorization` | Sets authentication and set backend to serve the request |

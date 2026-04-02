@@ -12,22 +12,13 @@
         <include-fragment fragment-id="set-llm-requested-model" />
         
         <!-- Setting allowed models variable (comma-separated list) -->
-        <set-variable name="allowedModels" value="gpt-4o,deepseek-r1" />
+        <set-variable name="allowedModels" value="gpt-4o,deepseek-r1,gpt-4.1,phi-4" />
         
         <!-- Validate model access based on allowedModels -->
         <include-fragment fragment-id="validate-model-access" />
 
         <!-- Capacity management - Subscription Level: allow only assigned tpm for each HR use case subscription -->
-        <llm-token-limit counter-key="@(context.Subscription.Id)" tokens-per-minute="400" estimate-prompt-tokens="false" tokens-consumed-header-name="consumed-tokens" remaining-tokens-header-name="remaining-tokens" token-quota="100000" token-quota-period="Monthly" retry-after-header-name="retry-after" />
-        
-        <!-- Failure to pass content safety will result in 403 error -->
-        <llm-content-safety backend-id="content-safety-backend" shield-prompt="true">
-            <!-- 0 is most restrictive and can be set up-to 7 -->
-            <categories output-type="EightSeverityLevels">
-                <category name="Hate" threshold="3" />
-                <category name="Violence" threshold="3" />
-            </categories>
-        </llm-content-safety>
+        <llm-token-limit counter-key="@(context.Subscription.Id)" tokens-per-minute="1000" estimate-prompt-tokens="false" token-quota="100000" token-quota-period="Monthly" />
     </inbound>
     <!-- Control if and how the requests are forwarded to services  -->
     <backend>

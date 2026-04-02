@@ -277,6 +277,7 @@ module policyFragments '../modules/apim/policy-fragments.bicep' = if (updatePoli
     apimServiceName: apimService.name
     enablePIIAnonymization: enablePIIAnonymization
     enableAIModelInference: enableAIModelInference
+    enableJwtAuth: entraAuth
   }
   dependsOn: [
     clientIdNamedValue

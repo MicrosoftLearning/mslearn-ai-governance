@@ -1,5 +1,0 @@
-                <!-- PII State Saving - Log PII processing to Event Hub for auditing -->
-                <set-variable name="piiStateSavingEnabled" value="true" />
-                <set-variable name="originalRequest" value="@(context.Variables.GetValueOrDefault<string>("piiInputContent"))" />
-                <set-variable name="originalResponse" value="@(context.Variables.GetValueOrDefault<string>("responseBodyContent"))" />
-                <include-fragment fragment-id="pii-state-saving" />

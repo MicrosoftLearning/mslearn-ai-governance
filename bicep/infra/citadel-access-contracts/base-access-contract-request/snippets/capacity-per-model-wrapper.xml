@@ -1,8 +1,0 @@
-        <!-- Capacity Management - Per Model Token Limits -->
-        <choose>
-{{PER_MODEL_ENTRIES}}
-            <otherwise>
-                <!-- Default model token limit for unlisted models -->
-                <llm-token-limit counter-key="@(context.Subscription.Id + &quot;-default&quot;)" tokens-per-minute="{{DEFAULT_TPM}}" estimate-prompt-tokens="false" tokens-consumed-header-name="consumed-tokens" remaining-tokens-header-name="remaining-tokens" token-quota="{{DEFAULT_QUOTA}}" token-quota-period="{{DEFAULT_QUOTA_PERIOD}}" retry-after-header-name="retry-after" />
-            </otherwise>
-        </choose>

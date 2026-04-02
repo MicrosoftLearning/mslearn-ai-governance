@@ -1,3 +1,0 @@
-        <!-- Model Access Control - Restrict allowed models -->
-        <set-variable name="allowedModels" value="{{ALLOWED_MODELS}}" />
-        <include-fragment fragment-id="validate-model-access" />

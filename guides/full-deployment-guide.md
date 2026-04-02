@@ -791,7 +791,43 @@ param appInsightsLogSettings = {
 
 #### Entra ID Authentication
 
-**Production Requirement:** Enable JWT-based authentication
+JWT-based authentication adds a security layer on top of subscription API keys. When enabled, the gateway validates JWT tokens from Microsoft Entra ID before forwarding requests to backends.
+
+**Automatic Provisioning (Recommended):**
+
+Set `entraAuth` to `true` and leave `entraClientId` empty. After deploying the landing zone, run the standalone Entra ID setup script which creates the app registration **and configures APIM directly** — no redeployment needed:
+
+```bash
+# 1. Deploy the gateway infrastructure (creates Key Vault, APIM, etc.)
+azd up
+
+# 2. Run Entra ID setup (creates app registration + configures APIM named values)
+cd bicep/infra/entra-id-setup
+pwsh ./setup.ps1
+
+# Done! APIM is now JWT-ready. No redeployment needed.
+```
+
+The setup script automatically:
+1. Creates an Entra ID App Registration with OAuth2 scopes and app roles
+2. Creates a service principal
+3. Generates a client secret and stores it in Key Vault as `ENTRA-APP-CLIENT-SECRET`
+4. Configures APIM JWT named values directly: `JWT-TenantId`, `JWT-AppRegistrationId`, `JWT-Issuer`, `JWT-OpenIdConfigUrl`
+5. Stores `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_AUDIENCE` as azd environment variables for future deployments
+
+> **Prerequisite:** The deploying user must have `Application.ReadWrite.All` or the `Application Developer` role in Entra ID.
+
+See [Entra ID Setup README](../bicep/infra/entra-id-setup/README.md) for full details.
+
+```bicep
+param entraAuth = true
+// Leave these empty for auto-provisioning:
+param entraTenantId = ''
+param entraClientId = ''
+param entraAudience = ''
+```
+
+**Manual Configuration (Bring Your Own App Registration):**
 
 ```bicep
 param entraAuth = true
@@ -800,13 +836,42 @@ param entraClientId = '11111111-2222-3333-4444-555555555555'
 param entraAudience = 'api://citadel-gateway'
 ```
 
-**Setup Steps:**
-1. Register App in Entra ID
-2. Configure API permissions
-3. Create client secret (store in Key Vault)
-4. Update parameter file
+**How JWT Authentication Works Across APIs:**
 
-Guide: [Entra ID Authentication](.)
+- JWT named values are deployed when `entraAuth=true`, supporting all APIs (Azure OpenAI, Universal LLM, Unified AI)
+- API Key authentication is always required (subscription-based)
+- JWT validation is optional per access contract — enable it per product by setting `jwtAuth.enabled: true` in the access contract JSON
+- The `security-handler` policy fragment handles both API Key and JWT validation
+- When a product requires JWT, clients must send both `api-key` and `Authorization: Bearer {token}` headers
+
+**Access Contract JWT Integration:**
+
+To require JWT authentication for a specific access contract, include the `jwtAuth` policy in the contract JSON:
+
+```json
+{
+  "policies": {
+    "jwtAuth": { "enabled": true },
+    "modelAccess": { "enabled": true, "allowedModels": ["gpt-4o"] }
+  }
+}
+```
+
+**Acquiring a JWT Token (Client Credentials Flow):**
+
+```http
+POST https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+&client_id={entra-app-client-id}
+&client_secret={entra-app-client-secret}
+&scope={audience}/.default
+```
+
+**Validation:** See the [JWT Access Contract Validation Notebook](../test/citadel-jwt-access-contract-tests.ipynb) for end-to-end testing.
+
+Guide: [Entra ID Authentication](./entraid-auth-validation.md)
 
 #### Network Security
 

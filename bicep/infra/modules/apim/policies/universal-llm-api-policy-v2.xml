@@ -7,7 +7,7 @@
             Purpose: Routes requests to appropriate backend pools based on model selection and RBAC permissions
             
             Flow:
-            1. Validate Entra ID authentication (optional, controlled by entra-validate named value)
+            1. Authenticate request (API Key always required, JWT optional per-product)
             2. Extract and validate model parameter from request payload
             3. Configure backend pools and routing rules
             4. Determine target backend pool based on model and permissions
@@ -20,14 +20,11 @@
             - Backend pool definitions are in frag-set-backend-pools fragment
         -->
         
-        <!-- Step 1: Validate Entra ID authentication (if enabled) -->
-        <include-fragment fragment-id="aad-auth" />
+        <!-- Step 1: Unified authentication (API Key + optional JWT per-product) -->
+        <include-fragment fragment-id="security-handler" />
         
         <!-- Step 2: Extract and validate model parameter from request -->
         <include-fragment fragment-id="set-llm-requested-model" />
-        
-        <!-- Remove api-key header to prevent it from being passed to backend endpoints -->
-        <set-header name="api-key" exists-action="delete" />
         
         <!-- Step 4: Configure RBAC and default routing behavior -->
         <!-- RBAC: Set allowed backend pools (comma-separated pool IDs, empty = all pools allowed) -->
@@ -35,6 +32,9 @@
         
         <!-- Set default backend pool (empty = return error for unmapped models) -->
         <set-variable name="defaultBackendPool" value="" />
+
+        <!-- Validate model access based on allowedModels -->
+        <include-fragment fragment-id="validate-model-access" />
 
         <!-- Step 4: Load backend pool configurations -->
         <include-fragment fragment-id="set-backend-pools" />
@@ -67,6 +67,7 @@
     </backend>
     <outbound>
         <base />
+        <include-fragment fragment-id="set-response-headers" />
     </outbound>
     <on-error>
         <base />
@@ -78,5 +79,6 @@
         -->
         
         <include-fragment fragment-id="raise-throttling-events" />
+        <include-fragment fragment-id="set-response-headers" />
     </on-error>
 </policies>
