@@ -39,8 +39,8 @@ param enableAIModelInference = true
 // Azure Managed Redis (AMR)
 param enableManagedRedis = true
 param redisPublicNetworkAccess = 'Disabled'
-param redisSkuName = 'Balanced_B10'
-param redisSkuCapacity = 2
+param redisSkuName = 'Balanced_B0'
+param redisSkuCapacity = 1
 
 // No Entra ID auth in dev (simplifies testing)
 param entraAuth = false
