@@ -2,7 +2,7 @@
 
 ## Overview
 
-The AI Citadel Governance Hub provides intelligent, model-based routing to LLM backends through Azure API Management (APIM). This guide explains how requests are routed to different backend/backend pools when using either the **Universal LLM API** or **Azure OpenAI API**.
+The AI Citadel Governance Hub provides intelligent, model-based routing to LLM backends through Azure API Management (APIM). This guide explains how requests are routed to different backend/backend pools when using the **Unified AI API**, **Universal LLM API**, or **Azure OpenAI API**.
 
 ## Supported APIs
 
@@ -10,10 +10,11 @@ The following APIs are configured out-of-the-box for handling LLM requests:
 
 | API | Path | Use Case |
 |-----|------|----------|
-| **Universal LLM API** | `/models/*` | **RECOMMENDED** OpenAI-compatible inference endpoints that supports various models |
+| **Unified AI API** | `/unified-ai/*` | **RECOMMENDED** Single wildcard endpoint supporting all API types (OpenAI, Inference, Responses, Gemini) with dynamic routing |
+| **Universal LLM API** | `/models/*` | OpenAI-compatible inference endpoints that supports various models |
 | **Azure OpenAI API** | `/openai/deployments/{deployment-id}/*` | Azure OpenAI SDK compatibility |
 
-Both APIs share the same underlying routing infrastructure and policy fragments.
+The **Universal LLM API** and **Azure OpenAI API** share the same underlying routing fragments. The **Unified AI API** extends these with additional fragments for dynamic path-based routing, centralized configuration caching, and multi-API-type support.
 
 ## Approach
 
@@ -21,13 +22,27 @@ The routing relies on APIM Policy Fragments to implement dynamic routing logic w
 
 Using policy fragments allows to keep the routing logic modular and reusable across multiple APIs.
 
-The fragments are:
-- `set-llm-requested-model`: Extracts the requested model from the request path or body
+**Shared fragments** (used by all three APIs):
 - `set-backend-pools`: Loads backend pool configurations that include supported models by which backends
-- `set-target-backend-pool`: Matches the requested model to a backend pool
-- `set-backend-authorization`: Configures appropriate authentication for the target backend
+- `set-target-backend-pool`: Matches the requested model to a backend pool (extended with `apiTypeOverrideBackend` for Unified AI)
+- `set-backend-authorization`: Configures appropriate authentication for the target backend (respects `skipBackendUrlRewrite` for Unified AI)
+- `set-llm-usage`: Collects token usage metrics
+- `validate-model-access`: Model access control per product
+
+**Shared fragment** (used by Universal LLM and Azure OpenAI only):
+- `set-llm-requested-model`: Extracts the requested model from the request path or body
+
+**Unified AI-specific fragments:**
+- `metadata-config`: Centralized JSON configuration for models, API types, and timeout settings
+- `central-cache-manager`: Caches and parses the metadata configuration with TTL-based expiry
+- `request-processor`: Analyzes request paths to detect API type and extract model (replaces `set-llm-requested-model` for the Unified AI API)
+- `security-handler`: Unified authentication (API Key + optional JWT per product)
+- `path-builder`: Reconstructs backend URIs based on API type
+- `set-response-headers`: Injects UAIG-* debug headers in responses (when enabled)
 
 ## Architecture Overview
+
+### Universal LLM API / Azure OpenAI API
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -77,9 +92,74 @@ The fragments are:
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Unified AI API
+
+The Unified AI API uses a wildcard catch-all (`/*`) to handle all request patterns through a single endpoint, with dynamic API-type detection and path reconstruction.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Client Request                                    │
+│  POST /unified-ai/openai/deployments/gpt-4o/chat/completions                │
+│  POST /unified-ai/models/chat/completions (body: model)                     │
+│  POST /unified-ai/v1beta/openai/chat/completions (Gemini)                   │
+│  POST /unified-ai/openai/responses (Responses API)                          │
+│  GET  /unified-ai/deployments (Model Discovery)                             │
+└────────────────────────────────────┬────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    APIM Gateway (Unified AI Inbound)                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │ 1. Load Metadata Config (models, api-types, timeouts)                 │  │
+│  │ 2. Cache Manager (version-keyed cache with 300s TTL)                  │  │
+│  │ 3. Request Processor (detect api-type from path, extract model)       │  │
+│  │ 4. Security Handler (API Key + optional JWT per product)              │  │
+│  │ 5. Validate Model Access (per product allowedModels)                  │  │
+│  │ 6. Load Backend Pools Configuration                   [SHARED]        │  │
+│  │ 7. Match Model → Backend Pool (with api-type override)[SHARED]        │  │
+│  │ 8. Set Authorization (Managed Identity)               [SHARED]        │  │
+│  │ 9. Path Builder (reconstruct backend URI per api-type)                │  │
+│  │ 10. Token Usage Metrics                               [SHARED]        │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────┬────────────────────────────────────────┘
+                                     │
+                              ┌──────┴──────┐
+                              │ API Type    │
+                              │ Detection   │
+                              └──────┬──────┘
+            ┌─────────┬──────────┬───┴───┬──────────┬────────────┐
+            ▼         ▼          ▼       ▼          ▼            ▼
+       ┌─────────┐┌────────┐┌────────┐┌────────┐┌──────────┐┌──────────┐
+       │ openai  ││infer-  ││respon- ││respon- ││openai-v1 ││gemini-   │
+       │         ││ence    ││ses     ││ses-v1  ││          ││openai    │
+       │/openai/ ││/models/││/openai/││/openai/││/openai/  ││/v1beta/  │
+       │deploy...││chat/.. ││respon..││v1/resp.││v1/deploy.││openai/.. │
+       └────┬────┘└───┬────┘└───┬────┘└───┬────┘└────┬─────┘└────┬─────┘
+            └─────────┴─────────┴────┬────┴──────────┴────────────┘
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                         Backend Pool Selection                             │
+│           (same pool infrastructure as other APIs)                         │
+└────────────────────────────────────┬───────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                          LLM Backend Targets                               │
+│                                                                            │
+│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐                │
+│   │   Foundry   │      │ Azure OpenAI│      │  External   │                │
+│   │  Endpoint   │      │  Endpoint   │      │  Provider   │                │
+│   └─────────────┘      └─────────────┘      └─────────────┘                │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Routing Flow Details
 
-### Step 1: Model Extraction
+### Universal LLM API / Azure OpenAI API Flow
+
+These two APIs use shared fragments for a straightforward model → backend pool → backend routing flow.
+
+#### Step 1: Model Extraction (set-llm-requested-model)
 
 The `set-llm-requested-model` policy fragment extracts the model from the request:
 
@@ -87,15 +167,13 @@ The `set-llm-requested-model` policy fragment extracts the model from the reques
 |--------|---------|---------|
 | **GET/DELETE Request** | Any GET or DELETE operation | Returns `"non-llm-request"` (skips model extraction) |
 | **URL Path Parameter** | `/deployments/{deployment-id}/...` | Azure OpenAI API (named operations) |
-| **URL Path Segment** | `/openai/deployments/{model}/...` | Unified AI API (wildcard operations) |
+| **URL Path Segment** | `/openai/deployments/{model}/...` | Universal LLM API (wildcard operations) |
 | **Request Body** | `{"model": "gpt-4o", ...}` | Universal LLM / Inference API |
-
-Purpose: Extracts the requested model from Azure OpenAI, Inference, or Unified AI endpoints
 
 **Supported Patterns:**
 1. **GET/DELETE Requests**: Returns `"non-llm-request"` to skip model-based routing (used for operations like listing models or deleting responses)
 2. Azure OpenAI: Model from `deployment-id` path parameter (`/deployments/{deployment-id}/chat/completions`)
-3. Unified AI: Model from URL path by detecting `/deployments/{model}/` segment (wildcard operations where APIM has no named path parameters)
+3. Universal LLM: Model from URL path by detecting `/deployments/{model}/` segment (wildcard operations where APIM has no named path parameters)
 4. Inference Endpoint: Model from request body JSON (`{"model": "model-name", ...}`)
 
 **Output Variable:**
@@ -104,11 +182,11 @@ Purpose: Extracts the requested model from Azure OpenAI, Inference, or Unified A
 Logic:
 - GET/DELETE requests return `"non-llm-request"` (no model routing needed)
 - First attempts to extract from `deployment-id` path parameter (Azure OpenAI named operations)
-- If not found, scans the URL path for `/deployments/{model}/` segment (Unified AI wildcard operations)
+- If not found, scans the URL path for `/deployments/{model}/` segment (wildcard operations)
 - If not found, attempts to extract from request body `model` field (Inference pattern)
 - Returns empty string if no pattern matches
 
-### Step 2: Backend Pool Configuration
+#### Step 2: Backend Pool Configuration (set-backend-pools)
 
 The `set-backend-pools` fragment loads all available backend pools:
 
@@ -152,7 +230,7 @@ It is worth noting that:
 - This policy fragment can be gateway-region aware to support different routing pools for different regions if needed (like have a self-hosted gateway that will only route to on-premises LLMs while cloud gateway will route to cloud LLMs).
 - Policy can be set to allow a default backend pool to be returned if no matching model is found.
 
-### Step 3: Target Pool Selection
+#### Step 3: Target Pool Selection (set-target-backend-pool)
 
 The `set-target-backend-pool` fragment matches the requested model to a backend:
 
@@ -170,7 +248,7 @@ The `set-target-backend-pool` fragment matches the requested model to a backend:
 - targetBackendPool: The selected backend pool name, `"non-llm-request"` for GET operations, or error code (ERROR_NO_MODEL, ERROR_NO_ALLOWED_POOLS)
 - targetPoolType: The type of the selected backend pool (e.g., "azure-openai", "ai-foundry", "non-llm-request")
 
-### Step 4: Authentication & Routing
+#### Step 4: Authentication & Routing (set-backend-authorization)
 
 The `set-backend-authorization` fragment configures backend-specific authentication:
 
@@ -195,9 +273,146 @@ It is worth noting there is default implementations for Azure LLMs, but this can
 | Backend Type | Authentication | URL Rewriting |
 |--------------|----------------|---------------|
 | `non-llm-request` | Skipped (operation-specific) | None |
-| `ai-foundry` | APIM's Managed Identity → Cognitive Services | None |
-| `azure-openai` | APIM's Managed Identity → Cognitive Services | Injects `/deployments/{model}/` |
+| `ai-foundry` | APIM's Managed Identity → Cognitive Services | None (or `/models/` prefix when `skipBackendUrlRewrite` is not set) |
+| `azure-openai` | APIM's Managed Identity → Cognitive Services | Injects `/deployments/{model}/` (skipped when `skipBackendUrlRewrite` is set) |
 | `external` | Backend credentials | None |
+
+> **Note:** When the Unified AI API sets `skipBackendUrlRewrite`, the `set-backend-authorization` fragment skips URL rewriting because the `path-builder` fragment handles URI construction instead.
+
+### Unified AI API Routing Flow
+
+The Unified AI API uses a different routing approach: instead of relying on APIM named path parameters, it uses wildcard operations (`/*`) and dynamically detects the API type from the request path. This allows a single API endpoint to serve OpenAI, Inference, Responses, and Gemini patterns.
+
+#### Supported API Types
+
+The `metadata-config` fragment defines the supported API types with their path patterns:
+
+| API Type | Base Path | Path Segment | Default API Version | Use Case |
+|----------|-----------|--------------|---------------------|----------|
+| `openai` | `/openai` | `/deployments` | `2024-02-15-preview` | Azure OpenAI chat completions |
+| `inference` | `/models` | `/models` | `2024-05-01-preview` | AI Foundry inference models |
+| `responses` | `/openai/responses` | `/responses` | `2025-03-01-preview` | OpenAI Responses API |
+| `responses-v1` | `/openai/v1/responses` | `/openai/v1/responses` | `v1` | OpenAI Responses API (v1) |
+| `openai-v1` | `/openai/v1` | `/deployments` | `v1` | OpenAI v1 completions |
+| `geminiopenai` | `/v1beta/openai` | `/v1beta/openai` | `v1beta` | Google Gemini OpenAI-compatible |
+
+Each API type can optionally define a `backend` property to override pool-based model routing and route to a specific backend directly (via `apiTypeOverrideBackend`).
+
+#### Step 1: Metadata Configuration (metadata-config)
+
+Loads the centralized JSON configuration containing model definitions, API type specs, cache settings, and timeout settings.
+
+**Output Variable:**
+- `metadata-config`: Raw JSON string with the full configuration
+
+The models section is dynamically generated from `llmBackendConfig` during Bicep deployment. The API types, cache settings, and timeout settings are static definitions.
+
+#### Step 2: Cache Management (central-cache-manager)
+
+Parses the `metadata-config` JSON and manages caching using APIM's internal cache for performance.
+
+**Cache Behavior:**
+- Cache key: `metadata-config-v{config-version}` (e.g., `metadata-config-v1.0.0`)
+- TTL: Configurable via `cache-settings.ttl-seconds` (default: 300 seconds)
+- Bypass: Send `UAIG-Config-Cache-Bypass: true` header to force a cache miss
+
+**Output Variables:**
+- `config-models`: JObject — model name → backend, apiVersion, timeout
+- `config-api-types`: JObject — api-type → base-path, path-segment, api-version
+- `config-timeout-settings`: JObject — streaming-multiplier and other timeout settings
+- `cache-operation`: `"cache-hit"` or `"cache-miss"`
+
+#### Step 3: Request Processing (request-processor)
+
+Analyzes the incoming request to detect the API type and extract the model. This fragment replaces `set-llm-requested-model` for the Unified AI API.
+
+**API Type Detection:**
+1. Removes the API path prefix (`/unified-ai`) from the request URL
+2. Matches the remaining path against configured `base-path` patterns in `config-api-types`
+3. Rejects unrecognized paths with a `403 Forbidden` response
+
+**Model Extraction** (in priority order):
+1. **GET/DELETE requests**: Returns `"non-llm-request"` (handled by operation-level policies)
+2. **Request body**: Extracts `model` field from JSON body
+3. **URL path segment**: Extracts model from path using `api-path-segment` (e.g., `/openai/deployments/{model}/...`)
+
+**Output Variables:**
+- `api-type`: Detected API type (e.g., `openai`, `inference`, `geminiopenai`)
+- `requestedModel`: Extracted model identifier (compatible with shared fragments)
+- `routing-processed-path`: Request path with API prefix removed
+- `response-id`: Response ID for responses API operations
+- `parsed-request-body`: Parsed JSON body for downstream use
+- `selected-api-version`: API version for backend requests (model-specific or api-type default)
+- `is-streaming`: Whether the request has `stream: true`
+- `apiTypeOverrideBackend`: Backend override from api-type config (empty for pool-based routing)
+- `skipBackendUrlRewrite`: Always `"true"` — tells `set-backend-authorization` to defer URI rewriting to `path-builder`
+
+#### Step 4: Security Handler (security-handler)
+
+Provides unified authentication across all API endpoints.
+
+- **API Key**: Always required (APIM subscription validation)
+- **JWT**: Optionally enforced per product via the `jwtRequired` context variable
+- **App Roles**: Optionally enforced when `requiredRoles` is set in the product policy
+
+**Output Variables:**
+- `auth-type`: `"api-key"`, `"jwt"`, `"api-key-jwt"`, or `"none"`
+- `user-id`: From JWT `azp` claim or subscription name
+- `jwt-roles`: Comma-separated list of app roles from the JWT token
+
+#### Steps 5–8: Shared Fragment Execution
+
+Steps 5 through 8 use the same shared fragments as the Universal LLM and Azure OpenAI APIs:
+- **validate-model-access**: Checks `allowedModels` per product
+- **set-backend-pools**: Loads backend pool configurations
+- **set-target-backend-pool**: Matches model to pool. For Unified AI, also checks `apiTypeOverrideBackend` — when set, bypasses pool matching and routes to the specified backend directly
+- **set-backend-authorization**: Sets managed identity token and backend service. Skips URL rewriting because `skipBackendUrlRewrite` is set by `request-processor`
+
+#### Step 9: Path Builder (path-builder)
+
+Reconstructs the backend URI from known components based on the detected API type. This ensures all requests route to valid backend endpoints.
+
+**Path Construction by API Type:**
+
+| API Type | Backend Path Pattern |
+|----------|---------------------|
+| `openai` (default) | `{api-base-path}/deployments/{model}/chat/completions` |
+| `inference` | `{api-base-path}/chat/completions` |
+| `geminiopenai` | `{api-base-path}/chat/completions` |
+| `openai-v1` | `{api-base-path}/chat/completions` |
+| `responses` / `responses-v1` | `{api-base-path}` or `{api-base-path}/{response-id}` |
+
+**Additional Behavior:**
+- Auto-injects `api-version` query parameter for `responses` and `inference` types
+- Adds `model` field to request body if not present (for `openai` type)
+- Non-LLM requests (GET/DELETE) skip path building entirely (handled by operation-level policies)
+
+#### Step 10: Response Headers (set-response-headers)
+
+Injects `UAIG-*` debug headers into responses when `enableResponseHeaders` is set to `true` in the product policy.
+
+| Header | Source | Description |
+|--------|--------|-------------|
+| `UAIG-Auth-Type` | security-handler | Authentication method used |
+| `UAIG-User-Id` | security-handler | User identifier |
+| `UAIG-Subscription` | security-handler | Subscription name |
+| `UAIG-Model-Id` | request-processor | Requested model |
+| `UAIG-API-Type` | request-processor | Detected API type |
+| `UAIG-Processed-Path` | request-processor | Path after prefix removal |
+| `UAIG-API-Version` | request-processor | API version sent to backend |
+| `UAIG-Is-Streaming` | request-processor | Whether request is streaming |
+| `UAIG-Backend` | set-target-backend-pool | Backend that served the request |
+| `UAIG-Final-Path` | path-builder | Reconstructed backend path |
+| `UAIG-Cache-Operation` | central-cache-manager | `cache-hit` or `cache-miss` |
+
+### Unified AI Deployment Discovery
+
+The Unified AI API includes named operations for model discovery that bypass the wildcard routing:
+
+- **`GET /unified-ai/deployments`** — Lists all available models the subscription has access to (filtered by product policy)
+- **`GET /unified-ai/deployments/{deployment-id}`** — Returns details for a specific model, or `404` if not found
+
+These operations use the shared `get-available-models` fragment and are handled by operation-level policies, not the wildcard catch-all.
 
 ## Backend Pool Types
 
@@ -255,6 +470,11 @@ Both APIs implement automatic retry on transient failures:
 </retry>
 ```
 
+The Unified AI API extends this with configurable timeouts from `metadata-config`:
+- **Base timeout**: 120 seconds (or model-specific value from config)
+- **Streaming multiplier**: 3x (configurable via `timeout-settings.streaming-multiplier`)
+- Model-specific timeouts are defined in the `models` section of `metadata-config`
+
 ## RBAC Integration
 
 Access contracts (applied at a product level) can restrict which backend pools a client can use:
@@ -297,13 +517,35 @@ The `set-llm-usage` fragment emits token metrics for monitoring:
 
 ## Policy Fragments Reference
 
+### Shared Fragments (All APIs)
+
+| Fragment | Purpose |
+|----------|---------|
+| `set-backend-pools` | Loads backend pool configurations |
+| `set-target-backend-pool` | Matches model to backend pool with RBAC (extended with `apiTypeOverrideBackend` for Unified AI) |
+| `set-backend-authorization` | Sets authentication and backend service (respects `skipBackendUrlRewrite` for Unified AI) |
+| `set-llm-usage` | Collects token usage metrics |
+| `validate-model-access` | Model access control per product |
+| `get-available-models` | Returns filtered list of models for deployment discovery |
+| `ai-foundry-compatibility` | CORS configuration for AI Foundry |
+| `raise-throttling-events` | Sends throttling metrics on errors |
+
+### Universal LLM / Azure OpenAI Only
+
 | Fragment | Purpose |
 |----------|---------|
 | `set-llm-requested-model` | Extracts model from request body, URL path parameter, or URL path segment |
-| `set-backend-pools` | Loads backend pool configurations |
-| `set-target-backend-pool` | Matches model to backend pool with RBAC |
-| `set-backend-authorization` | Sets authentication and set backend to serve the request |
-| `set-llm-usage` | Collects token usage metrics |
+
+### Unified AI-Specific Fragments
+
+| Fragment | Purpose |
+|----------|---------|
+| `metadata-config` | Centralized JSON configuration for models, API types, cache, and timeout settings |
+| `central-cache-manager` | Caches and parses metadata configuration with version-keyed TTL |
+| `request-processor` | Detects API type from path, extracts model, sets routing variables |
+| `security-handler` | Unified authentication (API Key required + optional JWT per product) |
+| `path-builder` | Reconstructs backend URI based on detected API type |
+| `set-response-headers` | Injects UAIG-* debug headers when enabled |
 
 ## Example Request Flows
 
@@ -346,15 +588,100 @@ api-key: <subscription-key>
 4. Find pool: `"gpt-4o-backend-pool"`
 5. Authenticate & route same as Universal LLM API
 
+### Unified AI API — OpenAI Pattern
+
+```http
+POST APIM_GATEWAY/unified-ai/openai/deployments/gpt-4o/chat/completions
+Content-Type: application/json
+api-key: <subscription-key>
+
+{
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+```
+
+**Flow:**
+1. Load & cache metadata config
+2. Request processor detects api-type: `"openai"` (path contains `/openai`)
+3. Extract model: `"gpt-4o"` from path segment `/deployments/gpt-4o/...`
+4. Security handler validates API key (JWT if required by product)
+5. Find pool: `"gpt-4o-backend-pool"` (shared fragment)
+6. Authenticate: Managed Identity token (shared fragment, URL rewrite skipped)
+7. Path builder constructs: `/openai/deployments/gpt-4o/chat/completions`
+8. Forward to backend with `api-version` query parameter
+
+### Unified AI API — Inference Pattern (Foundry)
+
+```http
+POST APIM_GATEWAY/unified-ai/models/chat/completions
+Content-Type: application/json
+api-key: <subscription-key>
+
+{
+  "model": "DeepSeek-R1",
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+```
+
+**Flow:**
+1. Load & cache metadata config
+2. Request processor detects api-type: `"inference"` (path contains `/models`)
+3. Extract model: `"DeepSeek-R1"` from request body
+4. Security handler validates API key
+5. Find pool: `"DeepSeek-R1-backend-pool"` (shared fragment)
+6. Authenticate: Managed Identity token
+7. Path builder constructs: `/models/chat/completions`
+8. Forward with `api-version=2024-05-01-preview`
+
+### Unified AI API — Gemini Pattern
+
+```http
+POST APIM_GATEWAY/unified-ai/v1beta/openai/chat/completions
+Content-Type: application/json
+api-key: <subscription-key>
+
+{
+  "model": "gemini-2.0-flash",
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+```
+
+**Flow:**
+1. Load & cache metadata config
+2. Request processor detects api-type: `"geminiopenai"` (path contains `/v1beta/openai`)
+3. Extract model: `"gemini-2.0-flash"` from request body
+4. Security handler validates API key
+5. Find pool or use api-type override backend
+6. Path builder constructs: `/v1beta/openai/chat/completions`
+7. Forward to Gemini backend
+
+### Unified AI API — Model Discovery
+
+```http
+GET APIM_GATEWAY/unified-ai/deployments
+api-key: <subscription-key>
+```
+
+**Flow:**
+1. Request processor identifies as `"non-llm-request"` (GET method)
+2. Operation-level policy handles the request directly
+3. `get-available-models` fragment returns filtered model list based on product access
+4. Returns JSON array of available deployments with model metadata
+
 ## Troubleshooting
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `400: Model could not be detected` | No model in body or URL | Include `"model"` in request body |
+| `400: Model could not be detected` | No model in body or URL | Include `"model"` in request body or path |
 | `400: Model 'x' is not supported` | No backend supports model | Check backend configuration |
 | `403: backend_pool_access_forbidden` | RBAC blocks pool access | Update product's `allowedBackendPools` |
+| `403: PathNotAllowed` | Unified AI request path doesn't match any configured API type | Check `metadata-config` api-types base-paths |
+| `401: product_required` | Request not associated with a product subscription | Provide a valid `api-key` header |
 | `429: Too Many Requests` | All backends throttling | Wait for retry-after or add capacity |
 | `503: Backend pool unavailable` | Circuit breaker open | Wait for trip duration to expire |
+
+**Unified AI Debug Headers:**
+When `enableResponseHeaders` is set to `true` in the product policy, response headers like `UAIG-API-Type`, `UAIG-Backend`, and `UAIG-Final-Path` help trace the routing decisions made by the gateway.
 
 ## Related Guides
 
