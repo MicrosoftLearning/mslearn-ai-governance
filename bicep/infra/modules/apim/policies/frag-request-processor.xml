@@ -168,6 +168,112 @@
         return String.Empty;
     }" />
 
+    <!-- Extract operation for openai-compat api-type (e.g., /v1/chat/completions → chat/completions) -->
+    <set-variable name="openai-compat-operation" value="@{
+        var apiType = context.Variables.GetValueOrDefault<string>("api-type", "");
+        if (!apiType.Equals("openai-compat", StringComparison.OrdinalIgnoreCase)) {
+            return String.Empty;
+        }
+        var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", "");
+        // Remove /v1/ prefix to get the operation
+        var idx = path.IndexOf("/v1/", StringComparison.OrdinalIgnoreCase);
+        if (idx >= 0) {
+            return path.Substring(idx + 4).TrimEnd('/');
+        }
+        var trimmed = path.TrimStart('/');
+        return trimmed.Substring(Math.Min(3, trimmed.Length)).TrimStart('/');
+    }" />
+
+    <!-- Extract response-id for openai-compat responses operations (e.g., /v1/responses/{id}) -->
+    <choose>
+        <when condition="@{
+            var op = context.Variables.GetValueOrDefault<string>("openai-compat-operation", "");
+            return op.StartsWith("responses/", StringComparison.OrdinalIgnoreCase);
+        }">
+            <set-variable name="response-id" value="@{
+                var op = context.Variables.GetValueOrDefault<string>("openai-compat-operation", "");
+                var parts = op.Split('/');
+                return parts.Length > 1 ? parts[1] : String.Empty;
+            }" />
+            <set-variable name="openai-compat-operation" value="responses" />
+        </when>
+    </choose>
+
+    <!-- Model alias resolution: check if requestedModel is an alias and resolve to actual model -->
+    <set-variable name="original-model-alias" value="" />
+    <set-variable name="is-alias" value="@(false)" />
+    <set-variable name="alias-models" value="@(new JArray())" />
+    <choose>
+        <when condition="@{
+            var model = context.Variables.GetValueOrDefault<string>("requestedModel", "");
+            if (string.IsNullOrEmpty(model) || model == "non-llm-request") { return false; }
+            var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
+            return aliases != null && aliases.Property(model) != null;
+        }">
+            <set-variable name="original-model-alias" value="@(context.Variables.GetValueOrDefault<string>("requestedModel", ""))" />
+            <set-variable name="is-alias" value="@(true)" />
+            <set-variable name="alias-models" value="@{
+                var alias = context.Variables.GetValueOrDefault<string>("requestedModel", "");
+                var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
+                if (aliases == null) { return new JArray(); }
+                var prop = aliases.Property(alias);
+                if (prop == null) { return new JArray(); }
+                var aliasEntry = prop.Value as JObject;
+                if (aliasEntry == null) { return new JArray(); }
+                var modelsProp = aliasEntry.Property("models");
+                if (modelsProp == null) { return new JArray(); }
+                var models = modelsProp.Value as JArray;
+                return models ?? new JArray();
+            }" />
+            <set-variable name="requestedModel" value="@{
+                var alias = context.Variables.GetValueOrDefault<string>("original-model-alias", "");
+                var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
+                if (aliases == null) { return alias; }
+                var prop = aliases.Property(alias);
+                if (prop == null) { return alias; }
+                var aliasConfig = prop.Value as JObject;
+                if (aliasConfig == null) { return alias; }
+                var modelsProp = aliasConfig.Property("models");
+                if (modelsProp == null) { return alias; }
+                var models = modelsProp.Value as JArray;
+                if (models == null || models.Count == 0) { return alias; }
+
+                var strategyProp = aliasConfig.Property("strategy");
+                var strategy = strategyProp != null ? strategyProp.Value.ToString() : "priority";
+                if (strategy.Equals("weighted", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Weighted round-robin using cache counter
+                    var weightsProp = aliasConfig.Property("weights");
+                    var weights = weightsProp != null ? weightsProp.Value as JArray : null;
+                    if (weights != null && weights.Count == models.Count)
+                    {
+                        var productId = context.Product != null ? context.Product.Id : "default";
+                        var cacheKey = "alias-counter-" + alias + "-" + productId;
+                        int counter = 0;
+                        try {
+                            if (context.Variables.ContainsKey(cacheKey)) {
+                                var cached = context.Variables.GetValueOrDefault<string>(cacheKey, "");
+                                if (!string.IsNullOrEmpty(cached)) { int.TryParse(cached, out counter); }
+                            }
+                        } catch { }
+
+                        int totalWeight = 0;
+                        foreach (var w in weights) { totalWeight += w.Value<int>(); }
+                        int pick = counter % Math.Max(totalWeight, 1);
+                        int cumulative = 0;
+                        for (int i = 0; i < models.Count; i++)
+                        {
+                            cumulative += weights[i].Value<int>();
+                            if (pick < cumulative) { return models[i].ToString(); }
+                        }
+                    }
+                }
+                // Default: priority — return first model
+                return models[0].ToString();
+            }" />
+        </when>
+    </choose>
+
     <!-- Validate that model parameter is present (skip for non-LLM requests) -->
     <choose>
         <when condition="@((string)context.Variables["requestedModel"] == "non-llm-request")">
@@ -233,7 +339,7 @@
     }" />
 
     <trace source="Request-Processor" severity="information">
-        <message>@($"Unified AI - Request processed: {context.Variables.GetValueOrDefault<string>("routing-processed-path", "n/a")} | API: {context.Variables.GetValueOrDefault<string>("api-type", "n/a")} | Model: {context.Variables.GetValueOrDefault<string>("requestedModel", "n/a")} | Streaming: {context.Variables.GetValueOrDefault<bool>("is-streaming", false)}")</message>
+        <message>@($"Unified AI - Request processed: {context.Variables.GetValueOrDefault<string>("routing-processed-path", "n/a")} | API: {context.Variables.GetValueOrDefault<string>("api-type", "n/a")} | Model: {context.Variables.GetValueOrDefault<string>("requestedModel", "n/a")} | Alias: {context.Variables.GetValueOrDefault<string>("original-model-alias", "")} | Op: {context.Variables.GetValueOrDefault<string>("openai-compat-operation", "")} | Streaming: {context.Variables.GetValueOrDefault<bool>("is-streaming", false)}")</message>
     </trace>
         </otherwise>
     </choose>

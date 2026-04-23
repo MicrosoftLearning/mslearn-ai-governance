@@ -5,15 +5,15 @@ using '../../../main.bicep'
 // ============================================================================
 
 param apim = {
-  subscriptionId: 'REPLACE'
-  resourceGroupName: 'REPLACE'
-  name: 'REPLACE'
+  subscriptionId: 'd2e7f84f-2790-4baa-9520-59ae8169ed0d'
+  resourceGroupName: 'rg-ai-hub-citadel-dev-57'
+  name: 'apim-dmdxocmlhenr4'
 }
 
 param keyVault = {
-  subscriptionId: 'REPLACE'
-  resourceGroupName: 'REPLACE'
-  name: 'REPLACE'
+  subscriptionId: 'd2e7f84f-2790-4baa-9520-59ae8169ed0d'
+  resourceGroupName: 'rg-citadel-agent-spoke-03'
+  name: 'kv-agent-spoke-03'
 }
 
 param useTargetAzureKeyVault = true
@@ -43,10 +43,10 @@ param productTerms = 'Access Contract created from testing notebook - HR Chat Ag
 param useTargetFoundry = true
 
 param foundry = {
-  subscriptionId: 'REPLACE'
-  resourceGroupName: 'REPLACE'
-  accountName: 'REPLACE'
-  projectName: 'REPLACE'
+  subscriptionId: 'd2e7f84f-2790-4baa-9520-59ae8169ed0d'
+  resourceGroupName: 'rg-citadel-agent-spoke-03'
+  accountName: 'aif-citadel-agent-spoke-03'
+  projectName: 'proj-citadel-agent-spoke-03'
 }
 
 param foundryConfig = {

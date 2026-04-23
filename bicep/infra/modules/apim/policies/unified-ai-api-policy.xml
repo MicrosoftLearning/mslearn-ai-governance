@@ -84,7 +84,14 @@
         <!-- Step 9: Build backend path and rewrite URI [Unified AI specific] -->
         <include-fragment fragment-id="path-builder" />
 
-        <!-- Step 10: Token usage metrics [SHARED with Azure OpenAI / Universal LLM] -->
+        <!-- Step 10: Format translation extension point [FUTURE] -->
+        <!-- When format translation is added, insert a format-translator fragment here.
+             It would check if the client api-type format differs from the backend's expected format
+             and transform request body accordingly (e.g., OpenAI → Anthropic Messages, Bedrock Converse).
+             Response body transformation would be added in the outbound section.
+             <include-fragment fragment-id="format-translator" /> -->
+
+        <!-- Step 11: Token usage metrics [SHARED with Azure OpenAI / Universal LLM] -->
         <include-fragment fragment-id="set-llm-usage" />
 
         <!-- CORS Configuration for AI Foundry Compatibility -->
@@ -114,8 +121,51 @@
             Backend Retry Logic
             Retries on 429 (throttling) or 5xx server errors.
             Skips retry when backend pool itself is unavailable.
+            When model aliases are active (is-alias=true), supports cross-model fallback:
+            after pool-level retries are exhausted, switches to the next model in the alias list.
+            Note: Cross-model fallback only works for pre-stream errors. Once streaming has started,
+            the response is committed and fallback is not possible.
         -->
-        <retry count="2" interval="0" first-fast-retry="true" condition="@(context.Response.StatusCode == 429 || (context.Response.StatusCode >= 500 && !context.Response.StatusReason.Contains("Backend pool") && !context.Response.StatusReason.Contains("is temporarily unavailable")))">
+        <retry count="@{
+            var isAlias = context.Variables.GetValueOrDefault<bool>("is-alias", false);
+            var aliasModels = context.Variables.GetValueOrDefault<JArray>("alias-models");
+            // Standard retries + one retry per additional alias model
+            return isAlias && aliasModels != null ? 2 + Math.Max(aliasModels.Count - 1, 0) : 2;
+        }" interval="0" first-fast-retry="true" condition="@(context.Response.StatusCode == 429 || (context.Response.StatusCode >= 500 && !context.Response.StatusReason.Contains("Backend pool") && !context.Response.StatusReason.Contains("is temporarily unavailable")))">
+            <!-- Cross-model fallback: on retry, try next model in alias if pool retries exhausted -->
+            <choose>
+                <when condition="@{
+                    var isAlias = context.Variables.GetValueOrDefault<bool>("is-alias", false);
+                    if (!isAlias) { return false; }
+                    // Check if we should switch to next alias model (on 429 or 5xx from current model)
+                    var statusCode = context.Response.StatusCode;
+                    return statusCode == 429 || statusCode >= 500;
+                }">
+                    <set-variable name="alias-retry-index" value="@{
+                        var current = context.Variables.GetValueOrDefault<int>("alias-retry-index", 0);
+                        return current + 1;
+                    }" />
+                    <choose>
+                        <when condition="@{
+                            var idx = context.Variables.GetValueOrDefault<int>("alias-retry-index", 0);
+                            var aliasModels = context.Variables.GetValueOrDefault<JArray>("alias-models");
+                            return aliasModels != null && idx < aliasModels.Count;
+                        }">
+                            <!-- Switch to next model in alias -->
+                            <set-variable name="requestedModel" value="@{
+                                var idx = context.Variables.GetValueOrDefault<int>("alias-retry-index", 0);
+                                var aliasModels = context.Variables.GetValueOrDefault<JArray>("alias-models");
+                                return aliasModels[idx].ToString();
+                            }" />
+                            <!-- Re-resolve backend pool for new model -->
+                            <include-fragment fragment-id="set-target-backend-pool" />
+                            <set-variable name="selected-backend" value="@(context.Variables.GetValueOrDefault<string>("targetBackendPool", ""))" />
+                            <include-fragment fragment-id="set-backend-authorization" />
+                            <include-fragment fragment-id="path-builder" />
+                        </when>
+                    </choose>
+                </when>
+            </choose>
             <forward-request timeout="@(context.Variables.GetValueOrDefault<int>("request-timeout", 120))" buffer-request-body="true" />
         </retry>
     </backend>

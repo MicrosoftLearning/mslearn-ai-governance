@@ -60,6 +60,40 @@
                 'base-path': '/model',
                 'path-segment': '/model',
                 'api-version': 'bedrock-2024-04-15'
+            },
+            'openai-compat': {
+                'base-path': '/v1',
+                'path-segment': '',
+                'api-version': 'v1'
+            }
+        },
+        'model-aliases': {
+            //{modelAliasesCode}
+        },
+        'backend-path-templates': {
+            'ai-foundry': {
+                'chat/completions': '/openai/deployments/{model}/chat/completions',
+                'embeddings': '/openai/deployments/{model}/embeddings',
+                'responses': '/openai/responses',
+                'images/generations': '/openai/deployments/{model}/images/generations',
+                'models': '/models'
+            },
+            'azure-openai': {
+                'chat/completions': '/openai/deployments/{model}/chat/completions',
+                'embeddings': '/openai/deployments/{model}/embeddings',
+                'responses': '/openai/responses',
+                'images/generations': '/openai/deployments/{model}/images/generations'
+            },
+            'aws-bedrock-mantle': {
+                'chat/completions': '/v1/chat/completions',
+                'responses': '/v1/responses',
+                'models': '/v1/models'
+            },
+            'gemini-openai': {
+                'chat/completions': '/v1beta/openai/chat/completions'
+            },
+            'aws-bedrock': {
+                'chat/completions': '/model/{model}/converse'
             }
         },
         'cache-settings': {

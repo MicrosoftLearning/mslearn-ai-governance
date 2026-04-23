@@ -86,6 +86,56 @@
                         </when>
                     </choose>
                 </when>
+                <!-- OpenAI-Compatible API: uses backend-path-templates for dynamic path construction -->
+                <when condition="@(context.Variables.GetValueOrDefault<string>("api-type", "").Equals("openai-compat", StringComparison.OrdinalIgnoreCase))">
+                    <set-variable name="finalPath" value="@{
+                        var operation = context.Variables.GetValueOrDefault<string>("openai-compat-operation", String.Empty);
+                        var poolType = context.Variables.GetValueOrDefault<string>("targetPoolType", String.Empty);
+                        var modelId = context.Variables.GetValueOrDefault<string>("requestedModel", String.Empty);
+                        var templates = context.Variables.GetValueOrDefault<JObject>("config-backend-path-templates");
+
+                        // Look up path template: backend-path-templates[poolType][operation]
+                        var backendTemplates = templates?[poolType] as JObject;
+                        var template = backendTemplates?[operation]?.ToString();
+
+                        if (String.IsNullOrEmpty(template)) {
+                            return String.Empty;
+                        }
+
+                        // Replace {model} placeholder with actual model (URL-encoded for special chars)
+                        if (template.Contains("{model}")) {
+                            template = template.Replace("{model}", System.Uri.EscapeDataString(modelId));
+                        }
+
+                        return template;
+                    }" />
+                    <!-- Return 400 if no template found for this backend-type × operation -->
+                    <choose>
+                        <when condition="@(String.IsNullOrEmpty(context.Variables.GetValueOrDefault<string>("finalPath", String.Empty)))">
+                            <return-response>
+                                <set-status code="400" reason="Bad Request" />
+                                <set-header name="Content-Type" exists-action="override">
+                                    <value>application/json</value>
+                                </set-header>
+                                <set-body>@{
+                                    var operation = context.Variables.GetValueOrDefault<string>("openai-compat-operation", "unknown");
+                                    var poolType = context.Variables.GetValueOrDefault<string>("targetPoolType", "unknown");
+                                    return new JObject(
+                                        new JProperty("error", new JObject(
+                                            new JProperty("message", $"Operation '{operation}' is not supported for backend type '{poolType}'."),
+                                            new JProperty("type", "invalid_request_error"),
+                                            new JProperty("code", "unsupported_operation")
+                                        ))
+                                    ).ToString();
+                                }</set-body>
+                            </return-response>
+                        </when>
+                    </choose>
+                    <!-- Inject api-version for backends that need it -->
+                    <set-query-parameter name="api-version" exists-action="override">
+                        <value>@(context.Variables.GetValueOrDefault<string>("selected-api-version"))</value>
+                    </set-query-parameter>
+                </when>
                 <!-- Default OpenAI: {api-base-path}/deployments/{model}/chat/completions -->
                 <otherwise>
                     <set-variable name="finalPath" value="@{

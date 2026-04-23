@@ -34,6 +34,13 @@ param awsSecretKey string = 'NA'
 @description('AWS region for Amazon Bedrock (e.g., us-east-1)')
 param awsRegion string = 'NA'
 
+@description('Model alias definitions for grouping models under a single alias name')
+param modelAliases array = []
+
+@description('Key Vault name for storing backend credentials (reserved for future use)')
+#disable-next-line no-unused-params
+param keyVaultName string = ''
+
 // ------------------
 //    VARIABLES
 // ------------------
@@ -41,8 +48,8 @@ param awsRegion string = 'NA'
 // Combine backend pools and direct backends for unified routing
 var allPools = union(policyFragmentConfig.backendPools, policyFragmentConfig.directBackends)
 
-// Generate C# code for each backend pool with unique variable names
-var backendPoolsArray = [for (pool, index) in allPools: replace(replace(replace(replace('// Pool: POOLNAME (Type: POOLTYPE)\nvar pool_INDEX = new JObject()\n{\n    { "poolName", "POOLNAME" },\n    { "poolType", "POOLTYPE" },\n    { "supportedModels", new JArray(MODELS) }\n};\nbackendPools.Add(pool_INDEX);', 'POOLNAME', pool.poolName), 'POOLTYPE', pool.poolType), 'INDEX', string(index)), 'MODELS', join(map(pool.supportedModels, (model) => '"${model}"'), ', '))]
+// Generate C# code for each backend pool with unique variable names (includes authType and authConfigNamedValue)
+var backendPoolsArray = [for (pool, index) in allPools: replace(replace(replace(replace(replace(replace('// Pool: POOLNAME (Type: POOLTYPE, Auth: AUTHTYPE)\nvar pool_INDEX = new JObject()\n{\n    { "poolName", "POOLNAME" },\n    { "poolType", "POOLTYPE" },\n    { "authType", "AUTHTYPE" },\n    { "authConfigNamedValue", "AUTHCONFIGNAMEDVALUE" },\n    { "supportedModels", new JArray(MODELS) }\n};\nbackendPools.Add(pool_INDEX);', 'POOLNAME', pool.poolName), 'POOLTYPE', pool.poolType), 'AUTHTYPE', pool.?authType ?? ''), 'AUTHCONFIGNAMEDVALUE', pool.?authConfigNamedValue ?? ''), 'INDEX', string(index)), 'MODELS', join(map(pool.supportedModels, (model) => '"${model}"'), ', '))]
 
 var backendPoolsCode = join(backendPoolsArray, '\n')
 
@@ -82,7 +89,15 @@ var metadataModelsResult = reduce(llmBackendConfig, { code: '', seenModels: [] }
 )
 var metadataModelsCode = metadataModelsResult.code
 var metadataConfigFragmentXml = loadTextContent('./policies/frag-metadata-config.xml')
-var updatedMetadataConfigFragmentXml = replace(metadataConfigFragmentXml, '//{modelsConfigCode}', metadataModelsCode)
+var updatedMetadataConfigStep1 = replace(metadataConfigFragmentXml, '//{modelsConfigCode}', metadataModelsCode)
+
+// Generate model aliases code from modelAliases parameter using reduce pattern
+var modelAliasesResult = reduce(modelAliases, { code: '', count: 0 }, (acc, alias) => {
+  code: '${acc.code}${acc.count > 0 ? ',\n' : ''}\t\t\t\'${alias.name}\': {\n\t\t\t\t\'models\': [${join(map(alias.models, m => '\'${m}\''), ', ')}],\n\t\t\t\t\'strategy\': \'${alias.?strategy ?? 'priority'}\'\n\t\t\t}'
+  count: acc.count + 1
+})
+var modelAliasesCode = modelAliasesResult.code
+var updatedMetadataConfigFragmentXml = replace(updatedMetadataConfigStep1, '//{modelAliasesCode}', modelAliasesCode)
 
 // ------------------
 //    RESOURCES
@@ -135,6 +150,25 @@ resource awsRegionNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-0
     secret: false
   }
 }
+
+// Dynamic named values for backend API key credentials
+// Backends with authConfig.namedValueKey and authConfig.keyVaultSecretUri use Key Vault references
+// Backends with authConfig.namedValueKey and authConfig.secretValue use explicit values (testing only)
+var backendAuthConfigs = filter(llmBackendConfig, config => !empty(config.?authConfig.?namedValueKey ?? ''))
+
+resource backendApiKeyNamedValues 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = [for config in backendAuthConfigs: {
+  name: config.authConfig.namedValueKey
+  parent: apimService
+  properties: {
+    displayName: config.authConfig.namedValueKey
+    secret: true
+    // Use Key Vault reference if keyVaultSecretUri is provided, otherwise use explicit value
+    keyVault: !empty(config.?authConfig.?keyVaultSecretUri ?? '') ? {
+      secretIdentifier: config.authConfig.keyVaultSecretUri
+    } : null
+    value: empty(config.?authConfig.?keyVaultSecretUri ?? '') ? (config.?authConfig.?secretValue ?? 'NOT_CONFIGURED') : null
+  }
+}]
 
 // Policy Fragment: Set Backend Pools
 resource setBackendPoolsFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {

@@ -10,9 +10,11 @@ The following APIs are configured out-of-the-box for handling LLM requests:
 
 | API | Path | Use Case |
 |-----|------|----------|
-| **Unified AI API** | `/unified-ai/*` | **RECOMMENDED** Single wildcard endpoint supporting all API types (OpenAI, Inference, Responses, Gemini) with dynamic routing |
+| **Unified AI API** | `/unified-ai/*` | **RECOMMENDED** Single wildcard endpoint supporting all API types (OpenAI, Inference, Responses, Gemini, OpenAI-Compatible) with dynamic routing |
 | **Universal LLM API** | `/models/*` | OpenAI-compatible inference endpoints that supports various models |
 | **Azure OpenAI API** | `/openai/deployments/{deployment-id}/*` | Azure OpenAI SDK compatibility |
+
+The Unified AI API includes an **OpenAI-Compatible path** (`/unified-ai/v1/*`) that allows clients to use standard OpenAI SDKs without modification. See the [OpenAI-Compatible API Guide](openai-compatible-api-guide.md) for details.
 
 The **Universal LLM API** and **Azure OpenAI API** share the same underlying routing fragments. The **Unified AI API** extends these with additional fragments for dynamic path-based routing, centralized configuration caching, and multi-API-type support.
 
@@ -484,7 +486,7 @@ Access contracts (applied at a product level) can restrict which backend pools a
 
 ```xml
 <!-- Product Policy for specific use case -->
-<set-variable name="allowedBackendPools" 
+<se t-variable name="allowedBackendPools" 
               value="gpt-4o-backend-pool,aif-citadel-primary" />
 ```
 

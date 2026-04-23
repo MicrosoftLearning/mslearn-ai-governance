@@ -34,7 +34,9 @@ param apimManagedIdentity object
   - backendId: Unique identifier (used in APIM backend resource name)
   - backendType: 'ai-foundry' | 'azure-openai' | 'aws-bedrock' | 'external'
   - endpoint: Base URL of the LLM service (e.g., https://xxx.services.ai.azure.com/models)
-  - authScheme: 'managedIdentity' | 'apiKey' | 'token'
+  - authScheme: 'managedIdentity' | 'apiKey' | 'token' (legacy, replaced by authType)
+  - authType: (Optional) 'managed-identity' | 'aws-sigv4' | 'api-key-bearer' | 'api-key-header' | 'none'
+  - authConfig: (Optional) { namedValueKey: 'apim-named-value-name' } — credential source for api-key auth types
   - supportedModels: Array of model objects, each with:
     - name: Model name (required)
     - sku: (Optional) SKU name for deployment, default 'Standard'
@@ -79,6 +81,21 @@ param awsSecretKey string = ''
 
 @description('AWS region for Amazon Bedrock (e.g., us-east-1)')
 param awsRegion string = ''
+
+@description('Model alias definitions for grouping models under a single alias name')
+@metadata({
+  description: '''
+  Each alias object should have:
+  - name: Alias name that clients use (e.g., "gpt-advanced")
+  - models: Array of model names included in the alias (must exist in llmBackendConfig)
+  - strategy: (Optional) "priority" (default, first available) or "weighted" (round-robin)
+  - weights: (Optional) Array of weights matching models array (required when strategy is "weighted")
+  '''
+})
+param modelAliases array = []
+
+@description('Key Vault name for storing backend credentials (required when backends use api-key auth with Key Vault references)')
+param keyVaultName string = ''
 
 // @description('Whether to deploy the Universal LLM API (set to false if API already exists)')
 // param deployUniversalLlmApi bool = true
@@ -157,6 +174,8 @@ module llmPolicyFragments 'modules/llm-policy-fragments.bicep' = {
     awsAccessKey: awsAccessKey
     awsSecretKey: awsSecretKey
     awsRegion: awsRegion
+    modelAliases: modelAliases
+    keyVaultName: keyVaultName
   }
 }
 

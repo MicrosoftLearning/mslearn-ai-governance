@@ -219,4 +219,52 @@
 
         return string.Empty;
     }" />
+
+    <!-- Set authType variable based on the target backend pool -->
+    <!-- Falls back to poolType-based defaults for backward compatibility when authType is absent -->
+    <set-variable name="targetAuthType" value="@{
+        string targetBackendPool = context.Variables.GetValueOrDefault<string>("targetBackendPool", "");
+        if (targetBackendPool == "non-llm-request") { return "non-llm-request"; }
+
+        JArray pools = context.Variables.GetValueOrDefault<JArray>("backendPools");
+        if (pools != null)
+        {
+            foreach (JObject pool in pools)
+            {
+                if (pool["poolName"].ToString() == targetBackendPool)
+                {
+                    // Use explicit authType if present, otherwise derive from poolType
+                    var authType = pool["authType"]?.ToString();
+                    if (!string.IsNullOrEmpty(authType)) { return authType; }
+
+                    var poolType = pool["poolType"]?.ToString() ?? "";
+                    if (poolType == "ai-foundry" || poolType == "azure-openai") { return "native-backend-authorization"; }
+                    if (poolType == "aws-bedrock") { return "aws-sigv4"; }
+                    if (poolType == "aws-bedrock-mantle" || poolType == "gemini-openai") { return "api-key-bearer"; }
+                    if (poolType == "external") { return "none"; }
+                    return "native-backend-authorization";
+                }
+            }
+        }
+        return "native-backend-authorization";
+    }" />
+
+    <!-- Set authConfigNamedValue for api-key-based auth types -->
+    <set-variable name="targetAuthConfigNamedValue" value="@{
+        string targetBackendPool = context.Variables.GetValueOrDefault<string>("targetBackendPool", "");
+        if (targetBackendPool == "non-llm-request") { return ""; }
+
+        JArray pools = context.Variables.GetValueOrDefault<JArray>("backendPools");
+        if (pools != null)
+        {
+            foreach (JObject pool in pools)
+            {
+                if (pool["poolName"].ToString() == targetBackendPool)
+                {
+                    return pool["authConfigNamedValue"]?.ToString() ?? "";
+                }
+            }
+        }
+        return "";
+    }" />
 </fragment>

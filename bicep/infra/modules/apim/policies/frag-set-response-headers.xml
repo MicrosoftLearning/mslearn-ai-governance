@@ -56,6 +56,21 @@
             <set-header name="UAIG-Final-Path" exists-action="override">
                 <value>@(context.Variables.GetValueOrDefault<string>("finalPath", "not-set"))</value>
             </set-header>
+            <set-header name="UAIG-Auth-Type-Backend" exists-action="override">
+                <value>@(context.Variables.GetValueOrDefault<string>("targetAuthType", "not-set"))</value>
+            </set-header>
+
+            <!-- Model Alias Context -->
+            <choose>
+                <when condition="@(context.Variables.GetValueOrDefault<bool>("is-alias", false))">
+                    <set-header name="UAIG-Alias" exists-action="override">
+                        <value>@(context.Variables.GetValueOrDefault<string>("original-model-alias", ""))</value>
+                    </set-header>
+                    <set-header name="UAIG-Resolved-Model" exists-action="override">
+                        <value>@(context.Variables.GetValueOrDefault<string>("requestedModel", ""))</value>
+                    </set-header>
+                </when>
+            </choose>
 
             <!-- Cache Context -->
             <set-header name="UAIG-Cache-Operation" exists-action="override">

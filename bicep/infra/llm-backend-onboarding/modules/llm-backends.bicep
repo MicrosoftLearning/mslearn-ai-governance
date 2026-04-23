@@ -73,14 +73,26 @@ resource llmBackends 'Microsoft.ApiManagement/service/backends@2024-06-01-previe
       ]
     } : null
     
-    // Authentication configuration based on auth scheme
-    credentials: config.authScheme == 'managedIdentity' ? {
-      header: {
+    // Backend authorization configuration
+    // Determines the effective authType: explicit authType > default from backendType
+    // managed-identity: configure credentials.managedIdentity on the backend resource (native APIM backend auth)
+    // api-key-bearer/api-key-header: credentials handled in policy fragments via named values
+    // aws-sigv4: credentials handled in policy fragments
+    // none: no auth configured
+    credentials: {
+      // Managed Identity authorization (native backend auth — no policy expression needed)
+      #disable-next-line BCP037
+      managedIdentity: (config.?authType ?? (config.backendType == 'aws-bedrock' ? 'aws-sigv4' : (config.backendType == 'external' ? 'none' : (config.backendType == 'aws-bedrock-mantle' || config.backendType == 'gemini-openai' ? 'api-key-bearer' : 'managed-identity')))) == 'managed-identity' ? {
+        clientId: managedIdentityClientId
+        resource: 'https://cognitiveservices.azure.com'
+      } : null
+      // Header-based credentials (managed identity client ID hint for Azure backends)
+      header: (config.?authType ?? (config.backendType == 'aws-bedrock' ? 'aws-sigv4' : (config.backendType == 'external' ? 'none' : 'managed-identity'))) == 'managed-identity' ? {
         'x-ms-client-id': [
           managedIdentityClientId
         ]
-      }
-    } : {}
+      } : {}
+    }
     
     // TLS configuration for secure communication
     tls: {
@@ -101,6 +113,8 @@ output backendIds array = [for (config, i) in llmBackendConfig: llmBackends[i].n
 output backendDetails array = [for (config, i) in llmBackendConfig: {
   backendId: config.backendId
   backendType: config.backendType
+  authType: config.?authType ?? ''
+  authConfigNamedValue: config.?authConfig.?namedValueKey ?? ''
   resourceId: llmBackends[i].id
   supportedModels: config.supportedModels
   priority: config.?priority ?? 1

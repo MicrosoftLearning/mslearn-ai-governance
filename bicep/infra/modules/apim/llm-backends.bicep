@@ -110,14 +110,21 @@ resource llmBackends 'Microsoft.ApiManagement/service/backends@2024-06-01-previe
       ]
     } : null
     
-    // Authentication configuration based on auth scheme
-    credentials: config.authScheme == 'managedIdentity' ? {
-      header: {
+    // Backend authorization configuration
+    // managed-identity: configure credentials.managedIdentity on the backend resource (native APIM backend auth)
+    // other auth types: handled in policy fragments
+    credentials: {
+      #disable-next-line BCP037
+      managedIdentity: config.authScheme == 'managedIdentity' ? {
+        clientId: managedIdentityClientId
+        resource: 'https://cognitiveservices.azure.com'
+      } : null
+      header: config.authScheme == 'managedIdentity' ? {
         'x-ms-client-id': [
           managedIdentityClientId
         ]
-      }
-    } : {}
+      } : {}
+    }
     
     // TLS configuration for secure communication
     tls: {

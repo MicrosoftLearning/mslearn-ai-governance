@@ -93,6 +93,12 @@
     <set-variable name="config-timeout-settings" value="@{
         return ((JObject)context.Variables["parsed-config"])["timeout-settings"] as JObject ?? new JObject();
     }" />
+    <set-variable name="config-model-aliases" value="@{
+        return ((JObject)context.Variables["parsed-config"])["model-aliases"] as JObject ?? new JObject();
+    }" />
+    <set-variable name="config-backend-path-templates" value="@{
+        return ((JObject)context.Variables["parsed-config"])["backend-path-templates"] as JObject ?? new JObject();
+    }" />
 
     <trace source="Cache-Manager" severity="information">
         <message>@($"Unified AI - Config loaded ({context.Variables["cache-operation"]}), models: {((JObject)context.Variables["config-models"]).Count}, api-types: {((JObject)context.Variables["config-api-types"]).Count}")</message>

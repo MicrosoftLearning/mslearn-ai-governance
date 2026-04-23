@@ -28,6 +28,8 @@ param backendDetails array
 var normalizedBackendDetails = [for backend in backendDetails: {
   backendId: backend.backendId
   backendType: backend.backendType
+  authType: backend.?authType ?? ''
+  authConfigNamedValue: backend.?authConfigNamedValue ?? ''
   resourceId: backend.resourceId
   priority: backend.priority
   weight: backend.weight
@@ -39,15 +41,15 @@ var normalizedBackendDetails = [for backend in backendDetails: {
 var modelToBackendsMap = reduce(normalizedBackendDetails, {}, (acc, backend) => union(acc, reduce(backend.modelNames, {}, (modelAcc, model) => union(modelAcc, {
   '${model}': union(
     contains(acc, model) ? acc[model] : [],
-    [
-      {
+    [{
         backendId: backend.backendId
         backendType: backend.backendType
+        authType: backend.authType
+        authConfigNamedValue: backend.authConfigNamedValue
         resourceId: backend.resourceId
         priority: backend.priority
         weight: backend.weight
-      }
-    ]
+      }]
   )
 }))))
 
@@ -123,6 +125,8 @@ output policyFragmentConfig object = {
   backendPools: map(poolConfigs, config => {
     poolName: config.poolName
     poolType: length(config.backends) > 0 ? config.backends[0].backendType : 'mixed'
+    authType: length(config.backends) > 0 ? config.backends[0].authType : ''
+    authConfigNamedValue: length(config.backends) > 0 ? config.backends[0].authConfigNamedValue : ''
     supportedModels: [config.modelName]
   })
   directBackends: map(
@@ -130,6 +134,8 @@ output policyFragmentConfig object = {
     (item) => {
       poolName: item.value[0].backendId
       poolType: item.value[0].backendType
+      authType: item.value[0].authType
+      authConfigNamedValue: item.value[0].authConfigNamedValue
       supportedModels: [item.key]
     }
   )
