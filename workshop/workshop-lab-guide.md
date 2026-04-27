@@ -66,7 +66,7 @@ You need a laptop where you can install software. The following tools are requir
 |------|---------|-------------|
 | **Azure CLI** (`az`) | Authenticate and manage Azure resources | [Install Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) |
 | **Azure Developer CLI** (`azd`) | Deploy Citadel infrastructure | [Install azd](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) |
-| **Python 3.10+** | Run validation notebooks | [python.org](https://www.python.org/downloads/) |
+| **Python 3.13+** | Run validation notebooks | [python.org](https://www.python.org/downloads/) |
 | **VS Code** | Code editor and notebook runner | [code.visualstudio.com](https://code.visualstudio.com/) |
 | **Git** | Clone the repository | [git-scm.com](https://git-scm.com/downloads) |
 
@@ -147,7 +147,22 @@ git checkout citadel-v1
 > azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator -e citadel-workshop --branch citadel-v1
 > ```
 
-### 3.2 Authenticate to Azure
+### 3.2 Copy Workshop Parameters
+
+The workshop ships with a pre-configured parameter file tailored for the lab environment. Copy it into the Bicep infrastructure folder so that `azd up` picks it up:
+
+```bash
+cp workshop/main.workshop.bicepparam bicep/infra/main.bicepparam
+```
+
+> **PowerShell:**
+> ```powershell
+> Copy-Item workshop\main.workshop.bicepparam bicep\infra\main.bicepparam
+> ```
+
+> **Why?** The workshop parameter file (`main.workshop.bicepparam`) has sensible defaults for the lab — including public network access to AI Foundry, pre-configured model deployments, and simplified networking settings — so you can focus on learning instead of tweaking parameters.
+
+### 3.3 Authenticate to Azure
 
 ```bash
 # Login to Azure CLI
@@ -166,13 +181,13 @@ az login --tenant-id <your-tenant-id>
 azd auth login --tenant-id <your-tenant-id>
 ```
 
-### 3.3 Create a New Environment
+### 3.4 Create a New Environment
 
 ```bash
 azd env new citadel-workshop
 ```
 
-### 3.4 Configure Environment (Optional Customization)
+### 3.5 Configure Environment (Optional Customization)
 
 The defaults work well for the workshop. However, you may want to set the Azure region:
 
@@ -191,7 +206,7 @@ azd env set ENABLE_MANAGED_REDIS false
 azd env set ENABLE_AZURE_AI_SEARCH false
 ```
 
-### 3.5 Deploy
+### 3.6 Deploy
 
 ```bash
 azd up
@@ -205,7 +220,7 @@ Then the deployment begins. **This takes approximately 30-45 minutes.**
 
 > **While waiting for deployment:** Read ahead through Lab 2 and Lab 3 to familiarize yourself with the services that are being deployed and the validation notebooks you will run.
 
-### 3.6 Verify Deployment
+### 3.7 Verify Deployment
 
 Once `azd up` completes:
 
@@ -330,9 +345,14 @@ uv sync
 
 **Option B — Using `pip`:**
 
+> **Important:** This workshop requires **Python 3.13 or later**. Install it from [python.org](https://www.python.org/downloads/) if you don't have it.
+
 ```bash
-# Create a virtual environment
-python -m venv .venv
+# Create a virtual environment with Python 3.13
+# Windows:
+py -3.13 -m venv .venv
+# macOS/Linux:
+# python3.13 -m venv .venv
 
 # Activate it
 # Windows:
