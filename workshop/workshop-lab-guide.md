@@ -147,20 +147,22 @@ git checkout citadel-v1
 > azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator -e citadel-workshop --branch citadel-v1
 > ```
 
-### 3.2 Copy Workshop Parameters
+### 3.2 Copy Workshop Files
 
-The workshop ships with a pre-configured parameter file tailored for the lab environment. Copy it into the Bicep infrastructure folder so that `azd up` picks it up:
+The workshop ships with pre-configured files tailored for the lab environment. Copy them into the Bicep infrastructure folder so that `azd up` picks them up:
 
 ```bash
+cp workshop/foundry.bicep bicep/infra/modules/foundry/foundry.bicep
 cp workshop/main.workshop.bicepparam bicep/infra/main.bicepparam
 ```
 
 > **PowerShell:**
 > ```powershell
+> Copy-Item workshop\foundry.bicep bicep\infra\modules\foundry\foundry.bicep
 > Copy-Item workshop\main.workshop.bicepparam bicep\infra\main.bicepparam
 > ```
 
-> **Why?** The workshop parameter file (`main.workshop.bicepparam`) has sensible defaults for the lab — including public network access to AI Foundry, pre-configured model deployments, and simplified networking settings — so you can focus on learning instead of tweaking parameters.
+> **Why?** The workshop parameter file (`main.workshop.bicepparam`) has sensible defaults for the lab — including public network access to AI Foundry, pre-configured model deployments, and simplified networking settings — so you can focus on learning instead of tweaking parameters. The workshop `foundry.bicep` module includes patches required for the lab environment.
 
 ### 3.3 Authenticate to Azure
 
@@ -238,6 +240,36 @@ You can also verify in the Azure Portal:
 1. Go to [portal.azure.com](https://portal.azure.com)
 2. Navigate to your resource group
 3. Confirm all resources are deployed (you should see APIM, Event Hub, Cosmos DB, Key Vault, AI Foundry, Logic App, etc.)
+
+### 3.8 Grant Key Vault Access to Your User
+
+The Agent Frameworks notebook (Notebook 3) uses Azure Key Vault to store and retrieve LLM endpoint credentials for the Sales-Assistant access contract. You need the **Key Vault Secrets User** role to read secrets at runtime.
+
+Run the following commands to grant yourself access:
+
+```bash
+# Store the Key Vault name from your deployment
+kvName=$(azd env get-value KEY_VAULT_NAME)
+
+# Get your current user's object ID
+userId=$(az ad signed-in-user show --query id -o tsv)
+
+# Get the Key Vault resource ID
+kvId=$(az keyvault show --name $kvName --query id -o tsv)
+
+# Assign Key Vault Secrets User role
+az role assignment create --role "Key Vault Secrets User" --assignee $userId --scope $kvId
+```
+
+**PowerShell:**
+```powershell
+$kvName = azd env get-value KEY_VAULT_NAME
+$userId = az ad signed-in-user show --query id -o tsv
+$kvId = az keyvault show --name $kvName --query id -o tsv
+az role assignment create --role "Key Vault Secrets User" --assignee $userId --scope $kvId
+```
+
+> **Note:** RBAC role assignments can take a few minutes to propagate. If you get a 403 error when running the Agent Frameworks notebook, wait a couple of minutes and retry.
 
 ---
 
