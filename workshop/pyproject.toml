@@ -13,6 +13,7 @@ dependencies = [
     "ipykernel>=7.2.0",
     "langchain>=1.2.15",
     "langchain-openai>=1.2.1",
+    "matplotlib>=3.10.9",
     "openai>=2.32.0",
     "opentelemetry-semantic-conventions-ai>=0.5.1",
 ]
