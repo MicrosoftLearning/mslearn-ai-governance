@@ -50,6 +50,8 @@ Citadel Governance Hub is an enterprise-grade AI landing zone that provides a ce
 
 Complete these steps **before** the workshop day to ensure a smooth experience.
 
+> **Assumed Knowledge:** This workshop assumes participants have a good working understanding of the Azure services used by Citadel (API Management, AI Foundry, Cosmos DB, Key Vault, Event Hub, etc.) and are comfortable using the tools listed below. You do not need to be a subject-matter expert, but we will not cover Azure fundamentals during the workshop.
+
 ### 2.1 Azure Requirements
 
 | Requirement | Details |
@@ -136,9 +138,9 @@ code --version
 ### 3.1 Clone the Repository
 
 ```bash
-git clone https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator.git
+git clone https://github.com/mohamedsaif/ai-hub-gateway-solution-accelerator.git
 cd ai-hub-gateway-solution-accelerator
-git checkout citadel-v1
+git checkout workshop
 ```
 
 > **Alternative using `azd init`:**
@@ -154,12 +156,16 @@ The workshop ships with pre-configured files tailored for the lab environment. C
 ```bash
 cp workshop/foundry.bicep bicep/infra/modules/foundry/foundry.bicep
 cp workshop/main.workshop.bicepparam bicep/infra/main.bicepparam
+cp workshop/keyvault-rbac.bicep bicep/infra/modules/keyvault/keyvault-rbac.bicep
+cp workshop/keyvault.bicep bicep/infra/modules/keyvault/keyvault.bicep
 ```
 
 > **PowerShell:**
 > ```powershell
 > Copy-Item workshop\foundry.bicep bicep\infra\modules\foundry\foundry.bicep
 > Copy-Item workshop\main.workshop.bicepparam bicep\infra\main.bicepparam
+> Copy-Item workshop\keyvault-rbac.bicep bicep\infra\modules\keyvault\keyvault-rbac.bicep
+> Copy-Item workshop\keyvault.bicep bicep\infra\modules\keyvault\keyvault.bicep
 > ```
 
 > **Why?** The workshop parameter file (`main.workshop.bicepparam`) has sensible defaults for the lab — including public network access to AI Foundry, pre-configured model deployments, and simplified networking settings — so you can focus on learning instead of tweaking parameters. The workshop `foundry.bicep` module includes patches required for the lab environment.
@@ -222,6 +228,8 @@ Then the deployment begins. **This takes approximately 30-45 minutes.**
 
 > **While waiting for deployment:** Read ahead through Lab 2 and Lab 3 to familiarize yourself with the services that are being deployed and the validation notebooks you will run.
 
+> **Transient errors:** Deployment of some resources (such as model deployments) may occasionally fail with a transient error. If `azd up` fails, simply re-run the command — it will pick up where it left off.
+
 ### 3.7 Verify Deployment
 
 Once `azd up` completes:
@@ -240,36 +248,6 @@ You can also verify in the Azure Portal:
 1. Go to [portal.azure.com](https://portal.azure.com)
 2. Navigate to your resource group
 3. Confirm all resources are deployed (you should see APIM, Event Hub, Cosmos DB, Key Vault, AI Foundry, Logic App, etc.)
-
-### 3.8 Grant Key Vault Access to Your User
-
-The Agent Frameworks notebook (Notebook 3) uses Azure Key Vault to store and retrieve LLM endpoint credentials for the Sales-Assistant access contract. You need the **Key Vault Secrets User** role to read secrets at runtime.
-
-Run the following commands to grant yourself access:
-
-```bash
-# Store the Key Vault name from your deployment
-kvName=$(azd env get-value KEY_VAULT_NAME)
-
-# Get your current user's object ID
-userId=$(az ad signed-in-user show --query id -o tsv)
-
-# Get the Key Vault resource ID
-kvId=$(az keyvault show --name $kvName --query id -o tsv)
-
-# Assign Key Vault Secrets User role
-az role assignment create --role "Key Vault Secrets User" --assignee $userId --scope $kvId
-```
-
-**PowerShell:**
-```powershell
-$kvName = azd env get-value KEY_VAULT_NAME
-$userId = az ad signed-in-user show --query id -o tsv
-$kvId = az keyvault show --name $kvName --query id -o tsv
-az role assignment create --role "Key Vault Secrets User" --assignee $userId --scope $kvId
-```
-
-> **Note:** RBAC role assignments can take a few minutes to propagate. If you get a 403 error when running the Agent Frameworks notebook, wait a couple of minutes and retry.
 
 ---
 
@@ -307,13 +285,19 @@ API Management is the core of Citadel. Explore these areas:
    - **Azure OpenAI API** — Standard Azure OpenAI compatible endpoint
    - **Universal LLM API** — Citadel's universal inference endpoint
    - **Unified AI API** — Multi-provider wildcard API (if enabled)
+3. Go to **APIs** → **All APIs** → **Settings**, then review the **Application Insights** and **Azure Monitor** tabs
+4. On the **Azure Monitor** tab, enable **Log LLM messages** for both **Log prompts** and **Log completions** (keep the default size values), then click **Save**
+
+> **Optional:** Select an API (e.g. Universal LLM API), open the **Test** tab, and search for the "chat" operation ("Gets chat completions for the provided chat messages."). Click **Send** and observe the reply.
 
 #### Products
 1. Go to **Products** — each product represents an "access contract" for a team/application
 2. Note the default products and how they map to subscription keys
 
+> **Note:** Additional products will be created when you run the validation notebooks.
+
 #### Policies
-1. Select an API → **Inbound processing** → **Policy code editor**
+1. Select an API → Select **All operations** → **Inbound processing** → **Policy code editor**
 2. Review the XML policies — look for:
    - Backend routing and load balancing
    - Token rate limiting
@@ -327,25 +311,24 @@ API Management is the core of Citadel. Explore these areas:
 #### Backends
 1. Go to **Backends** — see registered AI Foundry / OpenAI backends
 2. Note the circuit breaker configuration on each backend
+3. Go to **Load balancer** — see how backends are grouped into pools for load distribution
 
 ### 4.3 Explore AI Foundry
 
-1. Navigate to your **AI Foundry** resource
-2. Go to **Deployments** to see deployed models (GPT-4.1, DeepSeek-R1, text-embedding-3-large, etc.)
-3. Note that APIM's managed identity has **Cognitive Services OpenAI User** role on these resources
+1. Navigate to your **AI Foundry** resource in the Azure Portal
+2. Find the **Foundry project** and from its overview page, click the link to open the **Foundry portal** (alternatively, navigate directly to [ai.azure.com](https://ai.azure.com))
+3. In the Foundry portal, go to **Build** → **Models** to see deployed models (GPT-4.1, DeepSeek-R1, text-embedding-3-large, etc.)
+4. Back in the Azure Portal, go to the Foundry account → **Access control (IAM)** → **Role assignments** and look for the APIM managed identity (contains `-apim-` in its name) — it should have the **Cognitive Services OpenAI User** role
 
 ### 4.4 Explore Supporting Services
 
 **Cosmos DB:**
 1. Open **Data Explorer**
-2. Look for the `usage-db` database and `usage` container (will be populated after Lab 3)
-
-**Event Hub:**
-1. Navigate to Event Hub namespace
-2. See the event hub used for streaming usage events from APIM
+2. Look for the `ai-usage-db` database — the important containers are `ai-usage-container` (stores usage records) and `model-pricing` (stores model pricing data). These will be populated after Lab 3.
 
 **Key Vault:**
-1. Review stored secrets (access contract keys, optional Entra ID credentials)
+1. Review the Key Vault resource — note that there are no secrets stored immediately after `azd up`
+2. As part of the notebooks execution, secrets (such as access contract subscription keys) will be created here
 
 ---
 
@@ -404,22 +387,9 @@ pip install -r requirements.txt
 
 ### 5.3 Configure Notebook Variables
 
-Each notebook has an initialization cell (Step 0) where you set key variables. You will need:
+All required variables (resource group name, Azure region, APIM endpoint, etc.) are **automatically configured** in the notebooks. The initialization cell (Step 0) in each notebook retrieves these values from your `azd` environment and Azure resource metadata at runtime — you do not need to manually set anything.
 
-```python
-governance_hub_resource_group = "<your-resource-group-name>"  # From azd env get-values
-location = "<your-azure-region>"                               # e.g., "swedencentral"
-```
-
-Get these values from your deployment:
-```bash
-azd env get-values | grep -E "AZURE_RESOURCE_GROUP|AZURE_LOCATION"
-```
-
-Or on PowerShell:
-```powershell
-azd env get-values | Select-String "AZURE_RESOURCE_GROUP|AZURE_LOCATION"
-```
+Take a moment to review how this works in the code: the notebooks use `azd env get-values` and Azure CLI commands to discover resource names and endpoints, then inject them as Python variables used throughout the notebook.
 
 ### 5.4 Recommended Notebook Execution Order
 
@@ -435,6 +405,8 @@ This notebook registers AI backends into the APIM gateway and verifies routing. 
 - Verify model routing through multiple API formats
 - Test chat completions via SDK and streaming
 
+> **Lab context:** For the purposes of this lab, the same backends that were already provisioned by `azd up` will be re-provisioned through the notebook. In a real-world scenario, you would first provision new backends (e.g. a new AI Foundry account) and then use this notebook to register them with APIM. Note that all backends must be included in a single provisioning run — if only one new backend is added via the notebook, previously registered backends will be removed. For example, if `backend1` and `backend2` are already registered and you want to add `backend3`, all three must be specified in the notebook.
+
 Run all cells sequentially. Pay attention to the test outputs — you should see successful responses from your deployed models.
 
 #### Notebook 2: Access Contracts
@@ -448,7 +420,19 @@ This notebook creates three access contracts (think of them as per-team/per-app 
 
 Each contract gets its own APIM product with subscription key, rate limits, and policies. The notebook also runs a load test and visualizes throttling behavior.
 
-#### Notebook 3: PII Processing (Optional)
+#### Notebook 3: Agentic Frameworks (Optional)
+
+**File:** `citadel-agent-frameworks-tests.ipynb`
+
+This notebook tests Citadel access contracts using different agent frameworks to simulate multi-turn conversations. It validates that AI agents can route through the Citadel gateway using various integration patterns.
+
+#### Notebook 4: Unified AI API (Optional)
+
+**File:** `citadel-unified-ai-api-tests.ipynb`
+
+Tests multi-provider routing through the Unified AI Wildcard API.
+
+#### Notebook 5: PII Processing (Optional)
 
 **File:** `citadel-pii-processing-tests.ipynb`
 
@@ -457,17 +441,11 @@ Tests PII anonymization and blocking:
 - Verifies the gateway masks PII before forwarding to the LLM
 - Verifies the gateway blocks requests with PII when configured
 
-#### Notebook 4: Unified AI API (Optional)
-
-**File:** `citadel-unified-ai-api-tests.ipynb`
-
-Tests multi-provider routing through the Unified AI Wildcard API.
-
 ### 5.5 Running Notebooks — Tips
 
 - **Run cells one at a time** — don't "Run All" on the first pass; read the output of each cell
 - **Azure CLI auth** — make sure `az login` is active in your terminal before running notebooks
-- **Cleanup cells** — each notebook has cleanup cells at the end; you can skip these during the workshop to preserve data for Lab 4
+- **Cleanup** — do not worry about cleaning up resources created by notebooks individually; at the end of the workshop you will run `azd down --purge --force` which removes everything
 - **Errors?** — Check [Troubleshooting](#8-troubleshooting) section
 
 ---
@@ -477,68 +455,40 @@ Tests multi-provider routing through the Unified AI Wildcard API.
 **Goal:** After running notebooks, explore the telemetry and usage data generated by your API calls.  
 **Estimated time:** ~30 minutes
 
-### 6.1 Application Insights — APIM Telemetry
-
-1. In Azure Portal, navigate to the **Application Insights** resource associated with APIM (name: `appi-apim-*`)
-
-2. **Live Metrics** — If notebooks are still running, watch real-time request flow:
-   - Go to **Live Metrics**
-   - Observe incoming request rate, response times, and failures
-
-3. **Application Map** — Visualize how components are connected:
-   - Go to **Application Map**
-   - See APIM, AI Foundry backends, and dependency calls
-
-4. **Transaction Search** — Drill into individual requests:
-   - Go to **Transaction search**
-   - Filter by time range covering your notebook runs
-   - Click on a request to see full end-to-end trace (request → APIM policy execution → backend call → response)
-
-5. **Performance** — Analyze response times:
-   - Go to **Performance**
-   - Look at P50/P95/P99 latency for different API operations
-   - Compare latencies across models (GPT-4.1 vs DeepSeek-R1)
-
-6. **Failures** — Check for any failed requests:
-   - Go to **Failures**
-   - Review any 4xx/5xx errors — some 429 (throttled) errors are expected from load tests
-
-### 6.2 API Management — Built-in Analytics
+### 6.1 API Management — Built-in Analytics
 
 1. Navigate to your **API Management** resource
 
 2. **Analytics** (under Monitoring):
-   - View request counts, response times, and error rates per API
-   - Filter by time range and API product
+   - Explore the **Timeline** tab to see request volume over time
+   - Switch to the **Subscriptions** tab to view usage broken down by APIM subscription
+   - Open the **Language Models** tab to observe per-model metrics
 
 3. **Metrics**:
    - Go to **Metrics**
-   - Add metric: **Requests** → Split by **API Name**
-   - Add metric: **Backend Duration** to see backend response times
-   - Observe how traffic distributed across your notebook runs
+   - Add metric: **Requests** → Split by **ApiId** — observe how traffic distributed across your notebook runs
+   - Reset the chart, then add a new metric: **Backend Duration** to see backend response times
 
-4. **Diagnostic Logs**:
+   > **Tip:** Reset the chart before switching between **Requests** and **Backend Duration** — mixing the two metrics on the same chart produces confusing results.
+
+4. **Logs** (Log Analytics):
    - Go to **Logs** (Log Analytics)
-   - Run a sample query:
-     ```kusto
-     ApiManagementGatewayLogs
-     | where TimeGenerated > ago(1h)
-     | summarize count() by ResponseCode, ApiId
-     | order by count_ desc
-     ```
+   - Run sample queries to explore APIM gateway activity:
 
-### 6.3 Log Analytics — Centralized Logs
-
-1. Navigate to your **Log Analytics workspace** (`log-*`)
-
-2. Run queries to explore APIM gateway activity:
+   **Request summary by response code:**
+   ```kusto
+   ApiManagementGatewayLogs
+   | where TimeGenerated > ago(6h)
+   | summarize count() by ResponseCode, ApiId
+   | order by count_ desc
+   ```
 
    **Request volume by API:**
    ```kusto
    ApiManagementGatewayLogs
-   | where TimeGenerated > ago(2h)
+   | where TimeGenerated > ago(6h)
    | summarize RequestCount = count() by ApiId, bin(TimeGenerated, 5m)
-   | render timechart
+   | render columnchart
    ```
 
    **Latency percentiles:**
@@ -555,17 +505,30 @@ Tests multi-provider routing through the Unified AI Wildcard API.
    **Throttled requests (429s):**
    ```kusto
    ApiManagementGatewayLogs
-   | where TimeGenerated > ago(2h)
+   | where TimeGenerated > ago(6h)
    | where ResponseCode == 429
    | summarize ThrottledCount = count() by ProductId, bin(TimeGenerated, 5m)
-   | render timechart
+   | render columnchart
    ```
 
-### 6.4 Cosmos DB — Usage Records
+### 6.2 Application Insights — APIM Telemetry
+
+From your APIM resource, click the **Application Insights** option in the sidebar to navigate directly to the associated Application Insights resource.
+
+1. **Application Map** — Visualize how components are connected:
+   - Go to **Application Map**
+   - See APIM, AI Foundry backends, and dependency calls
+
+2. **Transaction Search** — Drill into individual requests:
+   - Go to **Transaction search**
+   - Filter by time range covering your notebook runs
+   - Click on a request to see full end-to-end trace (request → APIM policy execution → backend call → response)
+
+### 6.3 Cosmos DB — Usage Records
 
 1. Navigate to your **Cosmos DB** resource
 2. Open **Data Explorer**
-3. Select `usage-db` database → `usage` container
+3. Select `ai-usage-db` database → `ai-usage-container`
 4. Run a query to see usage records generated by your notebook calls:
 
    ```sql
@@ -580,14 +543,9 @@ Tests multi-provider routing through the Unified AI Wildcard API.
    - Subscription/product that made the call
    - Timestamp and response latency
 
-### 6.5 Event Hub — Streaming Events
+6. Also explore the `model-pricing` container to see how model pricing data is stored
 
-1. Navigate to your **Event Hub** namespace
-2. Go to **Event Hubs** and select the usage event hub
-3. Review **Metrics**:
-   - Incoming messages count
-   - Throughput (messages/sec)
-   - Note the correlation with your notebook activity
+> **Note:** If in step 3 you get a warning that the request is blocked by your Cosmos DB account firewall settings, go to your Cosmos DB resource → **Settings** → **Networking**, choose **Selected networks**, and add your current IP address.
 
 ---
 
@@ -597,10 +555,10 @@ After the workshop, remove all deployed resources to avoid ongoing costs:
 
 ```bash
 # This will delete ALL resources in the resource group and purge soft-deleted resources
-azd down --purge
+azd down --purge --force
 ```
 
-> **Important:** The `--purge` flag ensures soft-deleted resources (Key Vault, Cognitive Services) are permanently removed so you are not charged for them.
+> **Important:** The `--purge` flag ensures soft-deleted resources (Key Vault, Cognitive Services) are permanently removed so you are not charged for them. The `--force` flag skips confirmation prompts.
 
 Verify in the Azure Portal that your resource group has been deleted.
 
@@ -697,7 +655,7 @@ azd env list                # List all environments
 azd monitor --overview      # Open Application Insights in browser
 azd monitor --live          # Open Live Metrics in browser
 azd monitor --logs          # Open Log Analytics in browser
-azd down --purge            # Delete all resources
+azd down --purge --force    # Delete all resources
 ```
 
 ### Useful Links
