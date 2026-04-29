@@ -14,6 +14,7 @@
         Output Variables:
         - targetBackendPool: The selected backend pool name or error code (ERROR_NO_MODEL, ERROR_NO_ALLOWED_POOLS)
         - targetPoolType: The type of the selected backend pool (e.g., "azure-openai", "ai-foundry", "api-type-override")
+        - targetAuthType: The authentication type required for the selected backend pool.
     -->
     
     <!-- Determine target backend pool based on requested model and RBAC permissions -->

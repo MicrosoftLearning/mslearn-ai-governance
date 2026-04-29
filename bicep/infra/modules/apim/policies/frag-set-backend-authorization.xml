@@ -242,7 +242,24 @@
         <when condition="@(context.Variables.GetValueOrDefault<string>("targetPoolType", "") == "ai-foundry")">
             <set-variable name="rewriteTemplate" value="@{
                 string path = context.Request.Url.Path.TrimStart('/');
-                return string.Format("models/{0}", path);
+                string lowerPath = path.ToLowerInvariant();
+
+                // If path contains "responses", use /openai/v1/{path}
+                if (lowerPath.Contains("responses"))
+                {
+                    return string.Format("openai/v1/{0}", path);
+                }
+
+                // If path is chat/completions, embeddings, or images/embeddings, use /models/{path}
+                if (lowerPath.Contains("chat/completions") ||
+                    lowerPath.Contains("images/embeddings") ||
+                    lowerPath.Contains("embeddings"))
+                {
+                    return string.Format("models/{0}", path);
+                }
+
+                // Catch-all: /openai/v1/{path}
+                return string.Format("openai/v1/{0}", path);
             }" />
             <rewrite-uri template="@((string)context.Variables["rewriteTemplate"])" copy-unmatched-params="true" />
         </when>

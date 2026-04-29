@@ -150,7 +150,7 @@ resource foundryResources 'Microsoft.CognitiveServices/accounts@2025-06-01' = [f
 
     publicNetworkAccess: publicNetworkAccess
     networkAcls: {
-      defaultAction: 'Deny'
+      defaultAction: 'Allow'
       ipRules: []
       virtualNetworkRules: []
     }

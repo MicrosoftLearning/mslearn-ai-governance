@@ -402,7 +402,7 @@ module apiUniversalLLM './inference-api.bicep' = {
     apiManagementName: apimService.name
     inferenceAPIName: 'universal-llm-api'
     inferenceAPIPath: ''
-    inferenceAPIType: 'AzureAI'
+    inferenceAPIType: 'OpenAIV1'
     inferenceAPIDisplayName: 'Universal LLM API'
     inferenceAPIDescription: 'Universal LLM API to route requests to different LLM providers including Azure OpenAI, AI Foundry and 3rd party models.'
     allowSubscriptionKey: entraAuth ? false:true
@@ -528,6 +528,16 @@ resource universalLlmDeploymentByNameOperation 'Microsoft.ApiManagement/service/
   parent: universalLLMApi
 }
 
+resource universalLlmListModelsOperation 'Microsoft.ApiManagement/service/apis/operations@2022-08-01' existing = {
+  name: 'listModels'
+  parent: universalLLMApi
+}
+
+resource universalLlmRetrieveModelOperation 'Microsoft.ApiManagement/service/apis/operations@2022-08-01' existing = {
+  name: 'retrieveModel'
+  parent: universalLLMApi
+}
+
 resource openAIApi 'Microsoft.ApiManagement/service/apis@2022-08-01' existing = {
   name: 'azure-openai-api'
   parent: apimService
@@ -558,6 +568,24 @@ resource universalLlmDeploymentOperationPolicy 'Microsoft.ApiManagement/service/
 resource universalLlmDeploymentByNameOperationPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2022-08-01' = {
   name: 'policy'
   parent: universalLlmDeploymentByNameOperation
+  properties: {
+    format: 'rawxml'
+    value: loadTextContent('./policies/universal-llm-api-deployment-by-name-policy.xml')
+  }
+}
+
+resource universalLlmListModelsOperationPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2022-08-01' = {
+  name: 'policy'
+  parent: universalLlmListModelsOperation
+  properties: {
+    format: 'rawxml'
+    value: loadTextContent('./policies/universal-llm-api-deployments-policy.xml')
+  }
+}
+
+resource universalLlmRetrieveModelOperationPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2022-08-01' = {
+  name: 'policy'
+  parent: universalLlmRetrieveModelOperation
   properties: {
     format: 'rawxml'
     value: loadTextContent('./policies/universal-llm-api-deployment-by-name-policy.xml')

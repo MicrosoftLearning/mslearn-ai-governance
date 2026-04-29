@@ -28,6 +28,7 @@ param configureCircuitBreaker bool = false
   'AzureOpenAI'
   'AzureAI'
   'OpenAI'
+  'OpenAIV1'
 ])
 param inferenceAPIType string = 'AzureOpenAI'
 

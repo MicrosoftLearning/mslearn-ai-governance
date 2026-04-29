@@ -51,6 +51,7 @@ param allowSubscriptionKey bool = true
   'AzureOpenAI'
   'AzureAI'
   'OpenAI'
+  'OpenAIV1'
 ])
 param inferenceAPIType string = 'AzureOpenAI'
 
@@ -103,7 +104,7 @@ resource apimService 'Microsoft.ApiManagement/service@2024-06-01-preview' existi
   name: apiManagementName
 }
 
-var endpointPath = (inferenceAPIType == 'AzureOpenAI') ? 'openai' : (inferenceAPIType == 'AzureAI') ? 'models' : ''
+var endpointPath = (inferenceAPIType == 'AzureOpenAI') ? 'openai' : (inferenceAPIType == 'AzureAI') ? 'inference' : (inferenceAPIType == 'OpenAI') ? 'openai' : (inferenceAPIType == 'OpenAIV1') ? 'models' : ''
 
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis
 resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
@@ -124,7 +125,7 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
     }
     subscriptionRequired: allowSubscriptionKey
     type: 'http'
-    value: string((inferenceAPIType == 'AzureOpenAI') ? loadJsonContent('./universal-llm-api/AIFoundryOpenAI.json') : (inferenceAPIType == 'AzureAI') ? loadJsonContent('./universal-llm-api/AIFoundryAzureAI.json') : (inferenceAPIType == 'OpenAI') ? loadJsonContent('./universal-llm-api/AIFoundryAzureAI.json') : loadJsonContent('./universal-llm-api/PassThrough.json'))
+    value: string((inferenceAPIType == 'AzureOpenAI') ? loadJsonContent('./universal-llm-api/AIFoundryOpenAI.json') : (inferenceAPIType == 'AzureAI') ? loadJsonContent('./universal-llm-api/AIFoundryAzureAI.json') : (inferenceAPIType == 'OpenAI') ? loadJsonContent('./universal-llm-api/AIFoundryAzureAI.json') : (inferenceAPIType == 'OpenAIV1') ? loadJsonContent('./universal-llm-api/AIFoundryOpenAIV1.json') : loadJsonContent('./universal-llm-api/PassThrough.json'))
   }
 }
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis/policies
