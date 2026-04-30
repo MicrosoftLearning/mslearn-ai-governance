@@ -526,6 +526,17 @@ From your APIM resource, click the **Application Insights** option in the sideba
 
 ### 6.3 Cosmos DB — Usage Records
 
+**Populate data first:** Before querying Cosmos DB, you need to run the Logic App workflow that ingests usage data from Application Insights into Cosmos DB:
+
+1. In the Azure Portal, open the **Logic Apps** service (the resource name starts with `logic-`)
+2. Navigate to **Workflows** → **Workflows**
+3. Select the **`llm-usage-ingestion`** workflow
+4. Click **Run** to trigger the workflow manually
+5. Check **Run History** — wait until you see a successful run
+6. Explore the run results to observe how data flows from App Insights to Cosmos DB
+
+Once you have a successful run, proceed with querying the data:
+
 1. Navigate to your **Cosmos DB** resource
 2. Open **Data Explorer**
 3. Select `ai-usage-db` database → `ai-usage-container`
