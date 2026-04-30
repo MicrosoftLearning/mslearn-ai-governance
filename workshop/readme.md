@@ -535,7 +535,60 @@ From your APIM resource, click the **Application Insights** option in the sideba
 5. Check **Run History** — wait until you see a successful run
 6. Explore the run results to observe how data flows from App Insights to Cosmos DB
 
-Once you have a successful run, proceed with querying the data:
+Once you have a successful run, proceed with importing model pricing data.
+
+**Import model pricing data:** The `model-pricing` container stores per-model cost information used for usage analytics. This data is imported from a local JSON file (`model-pricing.json`) included in the workshop folder. The import script authenticates via Entra ID and requires the **Cosmos DB Built-in Data Contributor** role on your Cosmos DB account.
+
+1. First, retrieve your Cosmos DB account name and assign the required role to your current user:
+
+   ```bash
+   # Get the Cosmos DB account name from your deployment
+   COSMOS_ACCOUNT=$(az cosmosdb list --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) --query "[0].name" -o tsv)
+   COSMOS_RESOURCE_GROUP=$(azd env get-value AZURE_RESOURCE_GROUP)
+   CURRENT_USER_ID=$(az ad signed-in-user show --query id -o tsv)
+
+   # Assign "Cosmos DB Built-in Data Contributor" role (role definition id: 00000000-0000-0000-0000-000000000002)
+   az cosmosdb sql role assignment create \
+     --account-name $COSMOS_ACCOUNT \
+     --resource-group $COSMOS_RESOURCE_GROUP \
+     --role-definition-id 00000000-0000-0000-0000-000000000002 \
+     --principal-id $CURRENT_USER_ID \
+     --scope "/"
+   ```
+
+   > **PowerShell:**
+   > ```powershell
+   > $COSMOS_ACCOUNT = az cosmosdb list --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) --query "[0].name" -o tsv
+   > $COSMOS_RESOURCE_GROUP = azd env get-value AZURE_RESOURCE_GROUP
+   > $CURRENT_USER_ID = az ad signed-in-user show --query id -o tsv
+   >
+   > az cosmosdb sql role assignment create `
+   >   --account-name $COSMOS_ACCOUNT `
+   >   --resource-group $COSMOS_RESOURCE_GROUP `
+   >   --role-definition-id 00000000-0000-0000-0000-000000000002 `
+   >   --principal-id $CURRENT_USER_ID `
+   >   --scope "/"
+   > ```
+
+2. Run the import script to load model pricing data into Cosmos DB:
+
+   ```bash
+   # Get the Cosmos DB endpoint
+   COSMOS_ENDPOINT=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $COSMOS_RESOURCE_GROUP --query "documentEndpoint" -o tsv)
+
+   # Import model pricing data
+   uv run python import-model-pricing.py --endpoint $COSMOS_ENDPOINT
+   ```
+
+   > **PowerShell:**
+   > ```powershell
+   > $COSMOS_ENDPOINT = az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $COSMOS_RESOURCE_GROUP --query "documentEndpoint" -o tsv
+   > uv run python import-model-pricing.py --endpoint $COSMOS_ENDPOINT
+   > ```
+
+   You should see output confirming each model pricing record was upserted.
+
+**Query the data:** Now navigate to Cosmos DB to explore both usage records and model pricing:
 
 1. Navigate to your **Cosmos DB** resource
 2. Open **Data Explorer**
