@@ -136,7 +136,9 @@ azure-core==1.39.0
     #   azure-storage-blob
     #   microsoft-agents-hosting-core
 azure-cosmos==4.15.0
-    # via agent-framework-azure-cosmos
+    # via
+    #   workshop (pyproject.toml)
+    #   agent-framework-azure-cosmos
 azure-functions==1.24.0
     # via
     #   agent-framework-azurefunctions
