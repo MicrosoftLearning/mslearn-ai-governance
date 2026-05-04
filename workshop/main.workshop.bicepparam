@@ -126,6 +126,7 @@ param enableAIModelInference = bool(readEnvironmentVariable('ENABLE_AI_MODEL_INF
 param enableDocumentIntelligence = bool(readEnvironmentVariable('ENABLE_DOCUMENT_INTELLIGENCE', 'true'))
 param enableAzureAISearch = bool(readEnvironmentVariable('ENABLE_AZURE_AI_SEARCH', 'false'))
 param enableAIGatewayPiiRedaction = bool(readEnvironmentVariable('ENABLE_PII_REDACTION', 'true'))
+param deployDedicatedLanguageService = bool(readEnvironmentVariable('DEPLOY_DEDICATED_LANGUAGE_SERVICE', 'false'))
 param enableOpenAIRealtime = bool(readEnvironmentVariable('ENABLE_OPENAI_REALTIME', 'true'))
 param enableAIFoundry = bool(readEnvironmentVariable('ENABLE_AI_FOUNDRY', 'true'))
 param entraAuth = bool(readEnvironmentVariable('AZURE_ENTRA_AUTH', 'false'))
