@@ -154,20 +154,20 @@ git checkout workshop
 The workshop ships with pre-configured files tailored for the lab environment. Copy them into the Bicep infrastructure folder so that `azd up` picks them up:
 
 ```bash
-cp workshop/foundry.bicep bicep/infra/modules/foundry/foundry.bicep
-cp workshop/main.bicep bicep/infra/main.bicep
-cp workshop/main.workshop.bicepparam bicep/infra/main.bicepparam
-cp workshop/keyvault-rbac.bicep bicep/infra/modules/keyvault/keyvault-rbac.bicep
-cp workshop/keyvault.bicep bicep/infra/modules/keyvault/keyvault.bicep
+cp workshop/bicep/infra/modules/foundry/foundry.bicep bicep/infra/modules/foundry/foundry.bicep
+cp workshop/bicep/infra/main.bicep bicep/infra/main.bicep
+cp workshop/bicep/infra/main.workshop.bicepparam bicep/infra/main.bicepparam
+cp workshop/bicep/infra/modules/keyvault/keyvault-rbac.bicep bicep/infra/modules/keyvault/keyvault-rbac.bicep
+cp workshop/bicep/infra/modules/keyvault/keyvault.bicep bicep/infra/modules/keyvault/keyvault.bicep
 ```
 
 > **PowerShell:**
 > ```powershell
-> Copy-Item workshop\foundry.bicep bicep\infra\modules\foundry\foundry.bicep
-> Copy-Item workshop\main.bicep bicep\infra\main.bicep
-> Copy-Item workshop\main.workshop.bicepparam bicep\infra\main.bicepparam
-> Copy-Item workshop\keyvault-rbac.bicep bicep\infra\modules\keyvault\keyvault-rbac.bicep
-> Copy-Item workshop\keyvault.bicep bicep\infra\modules\keyvault\keyvault.bicep
+> Copy-Item workshop\bicep\infra\modules\foundry\foundry.bicep bicep\infra\modules\foundry\foundry.bicep
+> Copy-Item workshop\bicep\infra\main.bicep bicep\infra\main.bicep
+> Copy-Item workshop\bicep\infra\main.workshop.bicepparam bicep\infra\main.bicepparam
+> Copy-Item workshop\bicep\infra\modules\keyvault\keyvault-rbac.bicep bicep\infra\modules\keyvault\keyvault-rbac.bicep
+> Copy-Item workshop\bicep\infra\modules\keyvault\keyvault.bicep bicep\infra\modules\keyvault\keyvault.bicep
 > ```
 
 > **Why?** The workshop parameter file (`main.workshop.bicepparam`) has sensible defaults for the lab — including public network access to AI Foundry, pre-configured model deployments, and simplified networking settings — so you can focus on learning instead of tweaking parameters. The workshop `main.bicep` routes PII processing through the first AI Foundry service instead of deploying a separate Azure Language service. The workshop `foundry.bicep` module includes patches required for the lab environment.
