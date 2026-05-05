@@ -61,6 +61,21 @@ function ConvertTo-CompactNamePart {
     return $name
 }
 
+function ConvertTo-TrimmedCliOutput {
+    param([AllowNull()]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $text = [string]($Value | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    return $text.Trim()
+}
+
 function Add-RoleAssignmentIfMissing {
     param(
         [string]$PrincipalId,
@@ -116,7 +131,7 @@ $subscriptionId = Get-AzdValue -Name 'AZURE_SUBSCRIPTION_ID'
 if (-not [string]::IsNullOrWhiteSpace($subscriptionId)) {
     & az account set --subscription $subscriptionId
 } else {
-    $subscriptionId = (& az account show --query id -o tsv).Trim()
+    $subscriptionId = ConvertTo-TrimmedCliOutput (& az account show --query id -o tsv)
 }
 
 if ([string]::IsNullOrWhiteSpace($SpokeResourceGroupName)) {
@@ -146,7 +161,7 @@ $currentUserObjectId = (& az ad signed-in-user show --query id -o tsv 2>$null)
 if ([string]::IsNullOrWhiteSpace($currentUserObjectId)) {
     throw 'Could not resolve the signed-in user object ID. This script expects an interactive user login.'
 }
-$currentUserObjectId = $currentUserObjectId.Trim()
+$currentUserObjectId = ConvertTo-TrimmedCliOutput $currentUserObjectId
 
 Write-Step 'Creating spoke resource group'
 & az group create `
@@ -174,18 +189,39 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Foundry account already exists: $FoundryAccountName"
 }
 
-$foundryAccountId = (& az cognitiveservices account show `
+$foundryAccountId = ConvertTo-TrimmedCliOutput (& az cognitiveservices account show `
     --name $FoundryAccountName `
     --resource-group $SpokeResourceGroupName `
     --query id `
-    -o tsv).Trim()
+    -o tsv)
 
-& az rest `
-    --method patch `
-    --uri "https://management.azure.com$foundryAccountId`?api-version=2025-06-01" `
-    --headers 'Content-Type=application/json' `
-    --body '{"properties":{"allowProjectManagement":true,"disableLocalAuth":true,"publicNetworkAccess":"Enabled","networkAcls":{"defaultAction":"Allow","ipRules":[],"virtualNetworkRules":[]}}}' `
-    -o none
+$foundryAccountPatchBody = @{
+    properties = @{
+        allowProjectManagement = $true
+        disableLocalAuth = $true
+        publicNetworkAccess = 'Enabled'
+        networkAcls = @{
+            defaultAction = 'Allow'
+            ipRules = @()
+            virtualNetworkRules = @()
+        }
+    }
+} | ConvertTo-Json -Depth 5 -Compress
+
+$foundryAccountPatchPath = Join-Path ([System.IO.Path]::GetTempPath()) ("foundry-account-patch-{0}.json" -f [System.Guid]::NewGuid().ToString('N'))
+Set-Content -Path $foundryAccountPatchPath -Value $foundryAccountPatchBody -Encoding utf8NoBOM
+
+try {
+    & az resource patch `
+        --ids $foundryAccountId `
+        --api-version 2025-06-01 `
+        --properties "@$foundryAccountPatchPath" `
+        --only-show-errors `
+        -o none
+}
+finally {
+    Remove-Item -Path $foundryAccountPatchPath -Force -ErrorAction SilentlyContinue
+}
 
 Write-Step 'Creating Azure AI Foundry project'
 & az cognitiveservices account project show `
@@ -222,7 +258,7 @@ if ($LASTEXITCODE -ne 0) {
         '--tags', "azd-env-name=$tagEnvName", 'workload=citadel-spoke',
         '-o', 'none'
     )
-    if ($KeyVaultEnablePurgeProtection.ToLowerInvariant() -eq 'true') {
+    if ([string]::Equals($KeyVaultEnablePurgeProtection, 'true', [System.StringComparison]::OrdinalIgnoreCase)) {
         $keyVaultCreateArgs += @('--enable-purge-protection', 'true')
     }
     & az @keyVaultCreateArgs
@@ -230,21 +266,21 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Key Vault already exists: $KeyVaultName"
 }
 
-$existingKeyVaultPurgeProtection = (& az keyvault show `
+$existingKeyVaultPurgeProtection = ConvertTo-TrimmedCliOutput (& az keyvault show `
     --name $KeyVaultName `
     --resource-group $SpokeResourceGroupName `
     --query 'properties.enablePurgeProtection' `
-    -o tsv).Trim()
+    -o tsv)
 
 if ($existingKeyVaultPurgeProtection -eq 'true') {
     Write-Warning 'Key Vault purge protection is enabled and cannot be disabled. Immediate purge will not be available for this vault.'
 }
 
-$keyVaultId = (& az keyvault show `
+$keyVaultId = ConvertTo-TrimmedCliOutput (& az keyvault show `
     --name $KeyVaultName `
     --resource-group $SpokeResourceGroupName `
     --query id `
-    -o tsv).Trim()
+    -o tsv)
 
 Write-Step 'Assigning RBAC roles to the signed-in user'
 Add-RoleAssignmentIfMissing -PrincipalId $currentUserObjectId -PrincipalType User -RoleId $aiProjectManagerRoleId -RoleName 'Azure AI Project Manager' -Scope $foundryAccountId
