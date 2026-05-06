@@ -53,11 +53,13 @@ param existingVnetRG = readEnvironmentVariable('EXISTING_VNET_RG', '')
 param apimSubnetName = readEnvironmentVariable('APIM_SUBNET_NAME', '')
 param privateEndpointSubnetName = readEnvironmentVariable('PRIVATE_ENDPOINT_SUBNET_NAME', '')
 param functionAppSubnetName = readEnvironmentVariable('FUNCTION_APP_SUBNET_NAME', '')
+param agentSubnetName = readEnvironmentVariable('AGENT_SUBNET_NAME', '')
 
 // NSG & route table names
 param apimNsgName = readEnvironmentVariable('APIM_NSG_NAME', '')
 param privateEndpointNsgName = readEnvironmentVariable('PRIVATE_ENDPOINT_NSG_NAME', '')
 param functionAppNsgName = readEnvironmentVariable('FUNCTION_APP_NSG_NAME', '')
+param agentSubnetNsgName = readEnvironmentVariable('AGENT_SUBNET_NSG_NAME', '')
 param apimRouteTableName = readEnvironmentVariable('APIM_ROUTE_TABLE_NAME', '')
 
 // VNet address space and subnet prefixes
@@ -65,6 +67,10 @@ param vnetAddressPrefix = readEnvironmentVariable('VNET_ADDRESS_PREFIX', '10.170
 param apimSubnetPrefix = readEnvironmentVariable('APIM_SUBNET_PREFIX', '10.170.0.0/26')
 param privateEndpointSubnetPrefix = readEnvironmentVariable('PRIVATE_ENDPOINT_SUBNET_PREFIX', '10.170.0.64/26')
 param functionAppSubnetPrefix = readEnvironmentVariable('FUNCTION_APP_SUBNET_PREFIX', '10.170.0.128/26')
+param agentSubnetPrefix = readEnvironmentVariable('AGENT_SUBNET_PREFIX', '10.170.0.192/26')
+
+// Foundry network injection (agents). Defaults to true; required agent subnet is provisioned automatically when not using an existing VNet.
+param foundryNetworkInjectionEnabled = bool(readEnvironmentVariable('FOUNDRY_NETWORK_INJECTION_ENABLED', 'true'))
 
 // DNS Zone parameters (legacy approach - single subscription/RG)
 param dnsZoneRG = readEnvironmentVariable('DNS_ZONE_RG', '')
@@ -179,18 +185,23 @@ param logicContentShareName = readEnvironmentVariable('LOGIC_CONTENT_SHARE_NAME'
 param aiSearchInstances = []
 
 // AI Foundry instances configuration array
+// Per-instance `networkInjectionEnabled` opts the specific Foundry into (or out of)
+// agent network injection. Omit it to inherit the global foundryNetworkInjectionEnabled flag.
+// Agent subnet is regional - typically only enable injection for the instance in the VNet's region.
 param aiFoundryInstances = [
   {
     name: readEnvironmentVariable('AI_FOUNDRY_RESOURCE_NAME', '')
     location: readEnvironmentVariable('AZURE_LOCATION', 'eastus')
     customSubDomainName: ''
     defaultProjectName: 'citadel-governance-project'
+    networkInjectionEnabled: true
   }
   {
     name: readEnvironmentVariable('AI_FOUNDRY_RESOURCE_NAME', '')
     location: 'eastus2'
     customSubDomainName: ''
     defaultProjectName: 'citadel-governance-project'
+    networkInjectionEnabled: false
   }
 ]
 

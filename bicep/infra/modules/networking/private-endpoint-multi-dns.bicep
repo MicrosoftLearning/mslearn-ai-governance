@@ -30,12 +30,12 @@ param enableDnsIntegration bool = length(dnsZoneResourceIds) > 0 || (!empty(dnsZ
 var useLegacyDnsLookup = length(dnsZoneResourceIds) == 0 && !empty(dnsZoneRG) && length(dnsZoneNames) > 0
 
 // Reference existing DNS zones using legacy lookup (when dnsZoneResourceIds not provided)
-resource privateEndpointDnsZones 'Microsoft.Network/privateDnsZones@2020-06-01' existing = [for zoneName in dnsZoneNames: if (useLegacyDnsLookup) {
+resource privateEndpointDnsZones 'Microsoft.Network/privateDnsZones@2024-06-01' existing = [for zoneName in dnsZoneNames: if (useLegacyDnsLookup) {
   name: zoneName
   scope: resourceGroup(dnsSubId, dnsZoneRG)
 }]
 
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2022-09-01' = {
+resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   name: name
   location: location
   tags: tags
@@ -56,7 +56,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2022-09-01' = {
 }
 
 // DNS zone group using direct resource IDs (preferred)
-resource privateEndpointDnsGroupDirect 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-09-01' = if (enableDnsIntegration && length(dnsZoneResourceIds) > 0) {
+resource privateEndpointDnsGroupDirect 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2025-05-01' = if (enableDnsIntegration && length(dnsZoneResourceIds) > 0) {
   parent: privateEndpoint
   name: 'privateDnsZoneGroup'
   properties: {
@@ -70,7 +70,7 @@ resource privateEndpointDnsGroupDirect 'Microsoft.Network/privateEndpoints/priva
 }
 
 // DNS zone group using legacy lookup (when dnsZoneResourceIds not provided)
-resource privateEndpointDnsGroupLegacy 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-09-01' = if (enableDnsIntegration && length(dnsZoneResourceIds) == 0 && useLegacyDnsLookup) {
+resource privateEndpointDnsGroupLegacy 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2025-05-01' = if (enableDnsIntegration && length(dnsZoneResourceIds) == 0 && useLegacyDnsLookup) {
   parent: privateEndpoint
   name: 'privateDnsZoneGroup'
   properties: {

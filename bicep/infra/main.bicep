@@ -115,6 +115,9 @@ param privateEndpointSubnetName string = ''
 @description('Subnet name for Function/Logic App in the VNet. Leave blank to use default naming conventions.')
 param functionAppSubnetName string = ''
 
+@description('Subnet name for AI Foundry agent (network injection) workloads in the VNet. Leave blank to use default naming conventions. Required when foundryNetworkInjectionEnabled is true and useExistingVnet is true.')
+param agentSubnetName string = ''
+
 
 // NSG & route table names
 @description('NSG name for API Management subnet. Leave blank to use default naming conventions.')
@@ -125,6 +128,9 @@ param privateEndpointNsgName string = ''
 
 @description('NSG name for Function App subnet. Leave blank to use default naming conventions.')
 param functionAppNsgName string = ''
+
+@description('NSG name for AI Foundry agent (network injection) subnet. Leave blank to use default naming conventions.')
+param agentSubnetNsgName string = ''
 
 @description('Route Table name for API Management subnet. Leave blank to use default naming conventions.')
 param apimRouteTableName string = ''
@@ -141,6 +147,12 @@ param privateEndpointSubnetPrefix string = '10.170.0.64/26'
 
 @description('Function App subnet address range.')
 param functionAppSubnetPrefix string = '10.170.0.128/26'
+
+@description('AI Foundry agent (network injection) subnet address range. Used only when a new VNet is provisioned and foundryNetworkInjectionEnabled is true. Subnet is delegated to Microsoft.App/environments.')
+param agentSubnetPrefix string = '10.170.0.192/26'
+
+@description('Enable AI Foundry network injection by attaching the Foundry account to the agent subnet (delegated to Microsoft.App/environments). Defaults to true. When useExistingVnet is true the agentSubnetName must reference an existing subnet with the required delegation.')
+param foundryNetworkInjectionEnabled bool = true
 
 // DNS ZONE PARAMETERS - DNS zone configuration for private endpoints (for use with existing VNet)
 @description('Resource group containing the DNS zones (only used with existing VNet when existingPrivateDnsZones is not provided - LEGACY).')
@@ -404,19 +416,21 @@ param aiSearchInstances array = [
   // }
 ]
 
-@description('AI Foundry instances configuration array. The first element (index 0) is the **primary** Foundry resource. The primary Foundry powers the APIM AI Gateway content safety and PII processing capabilities (via the AI Services unified endpoint) AND can also host LLM model deployments. Add more entries to deploy additional Foundry resources in different regions for additional LLM capacity / regional routing. All entries can host LLM deployments declared in aiFoundryModelsConfig.')
+@description('AI Foundry instances configuration array. The first element (index 0) is the **primary** Foundry resource. The primary Foundry powers the APIM AI Gateway content safety and PII processing capabilities (via the AI Services unified endpoint) AND can also host LLM model deployments. Add more entries to deploy additional Foundry resources in different regions for additional LLM capacity / regional routing. All entries can host LLM deployments declared in aiFoundryModelsConfig. Each entry may optionally set `networkInjectionEnabled: true|false` to opt the specific Foundry resource into (or out of) agent network injection (delegated to Microsoft.App/environments). When omitted, the global `foundryNetworkInjectionEnabled` flag applies. Note: agent subnet is regional - only enable injection for instances in the same region as the VNet.')
 param aiFoundryInstances array = [
   {
     name: !empty(aiFoundryResourceName) ? aiFoundryResourceName : ''
     location: location
     customSubDomainName: ''
     defaultProjectName: 'citadel-governance-project'
+    networkInjectionEnabled: true
   }
   {
     name: !empty(aiFoundryResourceName) ? aiFoundryResourceName : ''
     location: 'eastus2'
     customSubDomainName: ''
     defaultProjectName: 'citadel-governance-project'
+    networkInjectionEnabled: false
   }
 ]
 
@@ -742,6 +756,10 @@ module vnet './modules/networking/vnet.bicep' = if(!useExistingVnet) {
     privateEndpointNsgName: !empty(privateEndpointNsgName) ? privateEndpointNsgName : 'nsg-pe-${resourceToken}'
     functionAppSubnetName: !empty(functionAppSubnetName) ? functionAppSubnetName : 'snet-functionapp'
     functionAppNsgName: !empty(functionAppNsgName) ? functionAppNsgName : 'nsg-functionapp-${resourceToken}'
+    enableAgentSubnet: foundryNetworkInjectionEnabled
+    agentSubnetName: !empty(agentSubnetName) ? agentSubnetName : 'snet-agents'
+    agentSubnetNsgName: !empty(agentSubnetNsgName) ? agentSubnetNsgName : 'nsg-agents-${resourceToken}'
+    agentSubnetAddressPrefix: agentSubnetPrefix
     vnetAddressPrefix: vnetAddressPrefix
     apimSubnetAddressPrefix: apimSubnetPrefix
     isAPIMV2SKU: apimSku == 'StandardV2' || apimSku == 'PremiumV2'
@@ -765,6 +783,7 @@ module vnetExisting './modules/networking/vnet-existing.bicep' = if(useExistingV
     apimSubnetName: !empty(apimSubnetName) ? apimSubnetName : 'snet-apim'
     privateEndpointSubnetName: !empty(privateEndpointSubnetName) ? privateEndpointSubnetName : 'snet-private-endpoint'
     functionAppSubnetName: !empty(functionAppSubnetName) ? functionAppSubnetName : 'snet-functionapp'
+    agentSubnetName: foundryNetworkInjectionEnabled ? agentSubnetName : ''
     vnetRG: existingVnetRG
   }
   dependsOn: [
@@ -874,6 +893,8 @@ module foundry 'modules/foundry/foundry.bicep' = {
     dnsZoneRG: !useExistingVnet ? resourceGroup.name : dnsZoneRG
     dnsSubscriptionId: !empty(dnsSubscriptionId) ? dnsSubscriptionId : subscription().subscriptionId
     dnsZoneResourceIds: aiFoundryDnsZoneResourceIds
+    networkInjectionEnabled: foundryNetworkInjectionEnabled
+    agentSubnetName: foundryNetworkInjectionEnabled ? (useExistingVnet ? vnetExisting.outputs.agentSubnetName : vnet.outputs.agentSubnetName) : ''
     // Key Vault connection parameters
     keyVaultId: keyVault.outputs.keyVaultId
     keyVaultUri: keyVault.outputs.keyVaultUri

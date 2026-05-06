@@ -142,6 +142,11 @@ Configure VNet, subnets, and network security:
 param vnetAddressPrefix = '10.170.0.0/24'
 param useExistingVnet = false
 param apimNetworkType = 'External'
+// AI Foundry network injection (enabled by default). When true, an additional
+// agent subnet delegated to Microsoft.App/environments is provisioned (greenfield)
+// or required (brownfield via agentSubnetName).
+param foundryNetworkInjectionEnabled = true
+param agentSubnetPrefix = '10.170.0.192/26'
 ```
 
 #### 4. **Feature Flags**
@@ -218,6 +223,10 @@ param vnetName = 'my-existing-vnet'
 param apimSubnetName = 'snet-apim'
 param privateEndpointSubnetName = 'snet-pe'
 param functionAppSubnetName = 'snet-func'
+// Required when foundryNetworkInjectionEnabled = true (default).
+// Subnet must already be delegated to Microsoft.App/environments.
+param agentSubnetName = 'snet-agents'
+param foundryNetworkInjectionEnabled = true
 param dnsZoneRG = 'dns-rg'
 param dnsSubscriptionId = 'your-subscription-id'
 ```

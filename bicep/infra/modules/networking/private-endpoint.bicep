@@ -31,7 +31,7 @@ resource privateEndpointDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' e
 // Effective DNS zone ID: use direct resource ID if provided, otherwise use legacy lookup
 var effectiveDnsZoneId = !empty(dnsZoneResourceId) ? dnsZoneResourceId : (useLegacyDnsLookup ? privateEndpointDnsZone.id : '')
 
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2022-09-01' = {
+resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   name: name
   location: location
   tags: tags
@@ -51,7 +51,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2022-09-01' = {
   }
 }
 
-resource privateEndpointDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-09-01' = if (enableDnsIntegration && !empty(effectiveDnsZoneId)) {
+resource privateEndpointDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2025-05-01' = if (enableDnsIntegration && !empty(effectiveDnsZoneId)) {
   parent: privateEndpoint
   name: 'privateDnsZoneGroup'
   properties: {

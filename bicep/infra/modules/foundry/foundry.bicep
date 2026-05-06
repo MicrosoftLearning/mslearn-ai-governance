@@ -98,6 +98,11 @@ param dnsSubscriptionId string = ''
 @description('Array of direct DNS zone resource IDs (preferred over dnsZoneRG/dnsSubscriptionId). Order should match aiServicesDnsZoneNames.')
 param dnsZoneResourceIds array = []
 
+@description('Enable network injection for AI Foundry resources (requires additional configuration)')
+param networkInjectionEnabled bool = false
+
+@description('Name of the subnet to use for AI Foundry network injection (required if network injection is enabled)')
+param agentSubnetName string = ''
 // ------------------
 //    KEY VAULT PARAMETERS
 // ------------------
@@ -126,11 +131,16 @@ resource subnet 'Microsoft.Network/virtualNetworks/subnets@2022-01-01' existing 
   parent: vnet
 }
 
+resource agentSubnet 'Microsoft.Network/virtualNetworks/subnets@2022-01-01' existing = if (networkInjectionEnabled) {
+  name: agentSubnetName
+  parent: vnet
+}
+
 
 // ------------------
 //    RESOURCES
 // ------------------
-resource foundryResources 'Microsoft.CognitiveServices/accounts@2025-12-01' = [for (config, i) in aiServicesConfig: {
+resource foundryResources 'Microsoft.CognitiveServices/accounts@2026-01-15-preview' = [for (config, i) in aiServicesConfig: {
   name: !empty(config.name) ? config.name : 'aif-${resourceToken}-${i}'
   location: config.location
   tags: tags
@@ -155,6 +165,17 @@ resource foundryResources 'Microsoft.CognitiveServices/accounts@2025-12-01' = [f
       ipRules: []
       virtualNetworkRules: []
     }
+    // Per-instance network injection: each entry in aiServicesConfig may set
+    // `networkInjectionEnabled: true|false`. When the property is omitted, the
+    // module-level `networkInjectionEnabled` flag (default) applies. Injection is
+    // only attempted when the agent subnet is available.
+    networkInjections: ((networkInjectionEnabled && (config.?networkInjectionEnabled ?? true)) ? [
+      {
+        scenario: 'agent'
+        subnetArmId: agentSubnet.id
+        useMicrosoftManagedNetwork: false
+      }
+    ] : null)
   }  
 }]
 
