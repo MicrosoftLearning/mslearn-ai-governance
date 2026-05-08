@@ -137,11 +137,11 @@ var metadata = union(
 // EXISTING RESOURCES
 // ============================================================================
 
-resource aiFoundry 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
+resource aiFoundry 'Microsoft.CognitiveServices/accounts@2026-03-01' existing = {
   name: aiFoundryAccountName
 }
 
-resource aiProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' existing = {
+resource aiProject 'Microsoft.CognitiveServices/accounts/projects@2026-03-01' existing = {
   name: aiFoundryProjectName
   parent: aiFoundry
 }
@@ -150,7 +150,7 @@ resource aiProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-pre
 // APIM CONNECTION RESOURCE
 // ============================================================================
 
-resource apimConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = {
+resource apimConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2026-03-01' = {
   name: connectionName
   parent: aiProject
   properties: {

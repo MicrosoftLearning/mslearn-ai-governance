@@ -55,7 +55,7 @@ param foundryConfig object = {
   // Custom discovery endpoints (optional - leave empty for APIM defaults)
   listModelsEndpoint: ''
   getModelEndpoint: ''
-  deploymentProvider: ''
+  deploymentProvider: 'AzureOpenAI'
   // Custom headers for requests
   customHeaders: {}
   // Custom auth configuration
