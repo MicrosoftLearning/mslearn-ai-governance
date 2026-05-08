@@ -194,7 +194,7 @@ param aiFoundryInstances = [
     location: readEnvironmentVariable('AZURE_LOCATION', 'eastus')
     customSubDomainName: ''
     defaultProjectName: 'citadel-governance-project'
-    networkInjectionEnabled: true
+    networkInjectionEnabled: false
   }
   {
     name: readEnvironmentVariable('AI_FOUNDRY_RESOURCE_NAME', '')
