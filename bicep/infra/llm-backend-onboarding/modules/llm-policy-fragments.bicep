@@ -241,6 +241,44 @@ resource getAvailableModelsFragment 'Microsoft.ApiManagement/service/policyFragm
   }
 }
 
+// Policy Fragment: Validate Model Access
+// Restricts access to specific models based on the allowedModels variable
+resource validateModelAccessFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  name: 'validate-model-access'
+  parent: apimService
+  properties: {
+    description: 'Validates that the requested model is in the allowed models list for the product'
+    format: 'rawxml'
+    value: loadTextContent('./policies/frag-validate-model-access.xml')
+  }
+}
+
+// Policy Fragment: Responses API ID Security (inbound)
+// Enforces per-subscription ownership of OpenAI Responses API response_id values
+// and hydrates routing for GET/DELETE operations on /responses/{id}.
+resource responsesIdSecurityFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  name: 'responses-id-security'
+  parent: apimService
+  properties: {
+    description: 'Inbound: validates response_id ownership and hydrates routing for /responses operations'
+    format: 'rawxml'
+    value: loadTextContent('./policies/frag-responses-id-security.xml')
+  }
+}
+
+// Policy Fragment: Responses API ID Cache Store (outbound)
+// Records response_id → "<subscriptionId>|<requestedModel>|<userId>" in APIM cache
+// after a successful POST /responses, enabling subsequent ownership checks.
+resource responsesIdCacheStoreFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  name: 'responses-id-cache-store'
+  parent: apimService
+  properties: {
+    description: 'Outbound: caches response_id ownership for newly created Responses API objects'
+    format: 'rawxml'
+    value: loadTextContent('./policies/frag-responses-id-cache-store.xml')
+  }
+}
+
 // Policy Fragment: Metadata Configuration
 // Provides centralized configuration for the Unified AI API with dynamically generated model mappings
 resource metadataConfigFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
@@ -269,8 +307,17 @@ output setTargetBackendPoolFragmentName string = setTargetBackendPoolFragment.na
 @description('Name of the get-available-models fragment')
 output getAvailableModelsFragmentName string = getAvailableModelsFragment.name
 
+@description('Name of the validate-model-access fragment')
+output validateModelAccessFragmentName string = validateModelAccessFragment.name
+
 @description('Name of the metadata-config fragment')
 output metadataConfigFragmentName string = metadataConfigFragment.name
+
+@description('Name of the responses-id-security fragment')
+output responsesIdSecurityFragmentName string = responsesIdSecurityFragment.name
+
+@description('Name of the responses-id-cache-store fragment')
+output responsesIdCacheStoreFragmentName string = responsesIdCacheStoreFragment.name
 
 @description('Generated backend pools configuration code')
 output backendPoolsCode string = backendPoolsCode

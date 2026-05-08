@@ -12,7 +12,7 @@
             <set-variable name="piiSubscriptionName" value="@(context.Subscription?.Name ?? "unknown")" />
             <set-variable name="piiSubscriptionId" value="@(context.Subscription?.Id ?? "unknown")" />
             <set-variable name="piiOperationName" value="@(context.Operation.Name ?? "unknown")" />
-            <set-variable name="targetDeployment" value="@(context.Variables.GetValueOrDefault<string>("targetDeployment") ?? "unknown")" />
+            <set-variable name="targetDeployment" value="@(context.Variables.GetValueOrDefault<string>("requestedModel") ?? "unknown")" />
             
             <!-- Log to Event Hub using native policy -->
             <log-to-eventhub logger-id="pii-usage-eventhub-logger">@{

@@ -69,9 +69,9 @@ Add a new entry to the `api-types` object in the metadata config. The key is you
 
 #### Important Considerations
 
-1. **Ordering matters for path matching**: The `request-processor` uses `path.Contains(basePath)` to match. If your `base-path` is a substring of another API type's path (e.g., `/model` vs `/models`), place the **longer path first** in the configuration. The current ordering ensures `/models` (inference) is checked before `/model` (bedrock) because the matching picks the first match found.
+1. **Prefix matching with longest-match wins**: The `request-processor` uses **case-insensitive `StartsWith`** matching against the request path (after stripping the `/unified-ai` API prefix) and selects the **longest matching `base-path`**. This means declaration order in `api-types` does **not** affect routing — `/openai/v1/responses` will always win over `/openai/v1` or `/openai` for a request like `/openai/v1/responses/{id}`. Unrecognized prefixes (e.g. `/v2/openai/...`) are rejected with `403 PathNotAllowed`.
 
-2. **The `base-path` must be unique**: No two API types should share the same base-path prefix to avoid ambiguous routing.
+2. **The `base-path` must be unique**: No two API types should declare the same `base-path` value.
 
 3. **Optional `backend` property**: If your API type should always route to a specific backend (bypassing model-based pool routing), add a `backend` property:
    ```json
@@ -132,6 +132,8 @@ Add a new `<when>` block inside the `<choose>` element, before the default `<oth
 | `{base-path}/deployments/{model}/chat/completions` | Deployment-based APIs | Azure OpenAI |
 | `{base-path}` or `{base-path}/{id}` | Resource-based APIs | Responses API |
 | `/model/{model}/converse` | Provider-specific paths | Amazon Bedrock |
+
+> **Stateful APIs (Responses API)** — When your new api-type exposes server-side stateful resources keyed by an id (similar to OpenAI's Responses API `response_id`), pair it with the cross-API `responses-id-security` / `responses-id-cache-store` fragments described in [llm-routing-architecture.md](llm-routing-architecture.md#step-15-responses-api-id-security-responses-id-security--responses-id-cache-store). Those fragments are wired in once per API policy and cover Universal LLM, Azure OpenAI, and Unified AI surfaces, returning **403** on cross-subscription access and **404** on unknown ids.
 
 #### Additional Behaviors
 

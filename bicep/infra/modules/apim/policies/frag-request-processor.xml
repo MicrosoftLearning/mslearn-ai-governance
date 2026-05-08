@@ -40,48 +40,49 @@
     <!-- Remove API path prefix: /unified-ai/openai/chat/completions -> /openai/chat/completions -->
     <set-variable name="routing-processed-path" value="@(context.Request.Url.Path.Replace(context.Api.Path, "").TrimStart('/').Insert(0, "/"))" />
 
-    <!-- Short-circuit for GET/DELETE requests (deployment listings, responses API) -->
-    <!-- These are handled by operation-level policies and don't need api-type routing -->
-    <choose>
-        <when condition="@(context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || context.Request.Method.Equals("DELETE", StringComparison.OrdinalIgnoreCase))">
-            <set-variable name="api-type" value="non-llm-operation" />
-            <set-variable name="requestedModel" value="non-llm-request" />
-            <set-variable name="response-id" value="" />
-            <set-variable name="selected-api-version" value="" />
-            <set-variable name="is-streaming" value="@(false)" />
-            <trace source="Request-Processor" severity="information">
-                <message>@($"Unified AI - Non-LLM request: {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "n/a")}")</message>
-            </trace>
-        </when>
-        <otherwise>
-            <!-- Determine API type from request path by matching against configured base-paths -->
-            <set-variable name="api-type" value="@{
-                try {
-                    var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty).ToLower();
-                    var match = context.Variables.GetValueOrDefault<JObject>("config-api-types")?.Children<JProperty>()
-                        .FirstOrDefault(a => {
-                            var basePath = a.Value["base-path"]?.ToString();
-                            return !String.IsNullOrEmpty(basePath) && path.Contains(basePath);
-                        });
-                    return match?.Name ?? String.Empty;
-                } catch { return String.Empty; }
-            }" />
+    <!-- Determine API type from request path by matching against configured base-paths.
+         Uses prefix matching (StartsWith) instead of substring (Contains) so that
+         unrecognized prefixes like /v2/openai/... do NOT accidentally match /openai.
+         Picks the longest matching base-path so that nested prefixes
+         (e.g. /openai/v1/responses vs /openai/v1 vs /openai) resolve to the most specific api-type
+         independent of declaration order. -->
+    <set-variable name="api-type" value="@{
+        try {
+            var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty).ToLower();
+            string bestName = String.Empty;
+            int bestLength = -1;
+            var apiTypes = context.Variables.GetValueOrDefault<JObject>("config-api-types");
+            if (apiTypes != null) {
+                foreach (var prop in apiTypes.Children<JProperty>()) {
+                    var basePath = prop.Value["base-path"]?.ToString();
+                    if (String.IsNullOrEmpty(basePath)) { continue; }
+                    var basePathLower = basePath.ToLower();
+                    if (path.StartsWith(basePathLower, StringComparison.OrdinalIgnoreCase)
+                        && basePathLower.Length > bestLength) {
+                        bestName = prop.Name;
+                        bestLength = basePathLower.Length;
+                    }
+                }
+            }
+            return bestName;
+        } catch { return String.Empty; }
+    }" />
 
-            <!-- Reject requests that don't match any configured API type base-path -->
-            <choose>
-                <when condition="@(String.IsNullOrEmpty(context.Variables.GetValueOrDefault<string>("api-type", String.Empty)))">
-                    <trace source="Request-Processor-Blocked" severity="error">
-                        <message>@($"Unified AI - Blocked request to {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "unknown")} from {context.Request.IpAddress}")</message>
-                    </trace>
-                    <return-response>
-                        <set-status code="403" reason="Forbidden" />
-                        <set-header name="Content-Type" exists-action="override">
-                            <value>application/json</value>
-                        </set-header>
-                        <set-body>{"error": {"code": "PathNotAllowed", "message": "The requested path is not allowed."}}</set-body>
-                    </return-response>
-                </when>
-            </choose>
+    <!-- Reject requests that don't match any configured API type base-path -->
+    <choose>
+        <when condition="@(String.IsNullOrEmpty(context.Variables.GetValueOrDefault<string>("api-type", String.Empty)))">
+            <trace source="Request-Processor-Blocked" severity="error">
+                <message>@($"Unified AI - Blocked request to {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "unknown")} from {context.Request.IpAddress}")</message>
+            </trace>
+            <return-response>
+                <set-status code="403" reason="Forbidden" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-body>{"error": {"code": "PathNotAllowed", "message": "The requested path is not allowed."}}</set-body>
+            </return-response>
+        </when>
+    </choose>
 
             <!-- Use API type to look up base path and path segment from metadata configuration -->
             <set-variable name="api-type-config" value="@{
@@ -341,6 +342,4 @@
     <trace source="Request-Processor" severity="information">
         <message>@($"Unified AI - Request processed: {context.Variables.GetValueOrDefault<string>("routing-processed-path", "n/a")} | API: {context.Variables.GetValueOrDefault<string>("api-type", "n/a")} | Model: {context.Variables.GetValueOrDefault<string>("requestedModel", "n/a")} | Alias: {context.Variables.GetValueOrDefault<string>("original-model-alias", "")} | Op: {context.Variables.GetValueOrDefault<string>("openai-compat-operation", "")} | Streaming: {context.Variables.GetValueOrDefault<bool>("is-streaming", false)}")</message>
     </trace>
-        </otherwise>
-    </choose>
 </fragment>

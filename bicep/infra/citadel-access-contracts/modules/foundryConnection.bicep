@@ -38,6 +38,10 @@ param apimSubscriptionKey string
 @description('Authentication type (ApiKey is currently supported)')
 param authType string = 'ApiKey'
 
+@allowed(['ApiManagement', 'ModelGateway'])
+@description('Foundry connection category. Use ModelGateway for portal-compatible model gateway connections.')
+param connectionCategory string = 'ApiManagement'
+
 @description('Share connection to all project users')
 param isSharedToAll bool = false
 
@@ -110,9 +114,10 @@ var staticModelsMetadata = hasStaticModels && !hasCustomDiscovery ? {
   models: string(staticModels)
 } : {}
 
-var customHeadersMetadata = hasCustomHeaders ? {
-  customHeaders: string(customHeaders)
-} : {}
+// Always emit customHeaders (portal requires this field even if empty)
+var customHeadersMetadata = {
+  customHeaders: hasCustomHeaders ? string(customHeaders) : '{}'
+}
 
 var authConfigMetadata = hasAuthConfig ? {
   authConfig: string(authConfig)
@@ -149,7 +154,7 @@ resource apimConnection 'Microsoft.CognitiveServices/accounts/projects/connectio
   name: connectionName
   parent: aiProject
   properties: {
-    category: 'ApiManagement'
+    category: connectionCategory
     target: targetUrl
     authType: authType
     isSharedToAll: isSharedToAll

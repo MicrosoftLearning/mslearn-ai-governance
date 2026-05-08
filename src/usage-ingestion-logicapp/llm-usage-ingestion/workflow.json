@@ -222,7 +222,7 @@
                     "parameters": {
                         "databaseId": "@appsetting('CosmosDBDatabase')",
                         "containerId": "@appsetting('CosmosDBContainerConfig')",
-                        "item": "{ \"id\": \"001\", \"type\": \"default\", \"lastExportDate\": \"@{variables('CurrentTime')}\", \"totalExportedRecords\": @{length(body('Run_query_and_list_results')?['value'])} }",
+                        "item": "{ \"id\": \"002\", \"type\": \"default\", \"lastExportDate\": \"@{variables('CurrentTime')}\", \"totalExportedRecords\": @{length(body('Run_query_and_list_results')?['value'])} }",
                         "isUpsert": true
                     },
                     "serviceProviderConfiguration": {

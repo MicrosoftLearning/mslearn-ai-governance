@@ -80,12 +80,6 @@ param usageProcessingLogicAppName string = ''
 @description('Name of the Storage Account. Leave blank to use default naming conventions.')
 param storageAccountName string = ''
 
-@description('Name of the Azure Language service. Leave blank to use default naming conventions.')
-param languageServiceName string = ''
-
-@description('Name of the Azure Content Safety service. Leave blank to use default naming conventions.')
-param aiContentSafetyName string = ''
-
 @description('Name of the API Center service. Leave blank to use default naming conventions.')
 param apicServiceName string = ''
 
@@ -121,6 +115,9 @@ param privateEndpointSubnetName string = ''
 @description('Subnet name for Function/Logic App in the VNet. Leave blank to use default naming conventions.')
 param functionAppSubnetName string = ''
 
+@description('Subnet name for AI Foundry agent (network injection) workloads in the VNet. Leave blank to use default naming conventions. Required when foundryNetworkInjectionEnabled is true and useExistingVnet is true.')
+param agentSubnetName string = ''
+
 
 // NSG & route table names
 @description('NSG name for API Management subnet. Leave blank to use default naming conventions.')
@@ -131,6 +128,9 @@ param privateEndpointNsgName string = ''
 
 @description('NSG name for Function App subnet. Leave blank to use default naming conventions.')
 param functionAppNsgName string = ''
+
+@description('NSG name for AI Foundry agent (network injection) subnet. Leave blank to use default naming conventions.')
+param agentSubnetNsgName string = ''
 
 @description('Route Table name for API Management subnet. Leave blank to use default naming conventions.')
 param apimRouteTableName string = ''
@@ -147,6 +147,12 @@ param privateEndpointSubnetPrefix string = '10.170.0.64/26'
 
 @description('Function App subnet address range.')
 param functionAppSubnetPrefix string = '10.170.0.128/26'
+
+@description('AI Foundry agent (network injection) subnet address range. Used only when a new VNet is provisioned and foundryNetworkInjectionEnabled is true. Subnet is delegated to Microsoft.App/environments.')
+param agentSubnetPrefix string = '10.170.0.192/26'
+
+@description('Enable AI Foundry network injection by attaching the Foundry account to the agent subnet (delegated to Microsoft.App/environments). Defaults to true. When useExistingVnet is true the agentSubnetName must reference an existing subnet with the required delegation.')
+param foundryNetworkInjectionEnabled bool = true
 
 // DNS ZONE PARAMETERS - DNS zone configuration for private endpoints (for use with existing VNet)
 @description('Resource group containing the DNS zones (only used with existing VNet when existingPrivateDnsZones is not provided - LEGACY).')
@@ -192,12 +198,6 @@ param cosmosDbPrivateEndpointName string = ''
 @description('Event Hub private endpoint name. Leave blank to use default naming conventions.')
 param eventHubPrivateEndpointName string = ''
 
-@description('Name of the Azure Language service private endpoint. Leave blank to use default naming conventions.')
-param languageServicePrivateEndpointName string = ''
-
-@description('Name of the Azure Content Safety service private endpoint. Leave blank to use default naming conventions.')
-param aiContentSafetyPrivateEndpointName string = ''
-
 @description('API Management V2 private endpoint name. Leave blank to use default naming conventions.')
 param apimV2PrivateEndpointName string = ''
 
@@ -229,14 +229,6 @@ param cosmosDbPublicAccess string = 'Disabled'
 @description('Event Hub public network access. Needed to be Enabled when using APIM v2 SKUs during provisioning')
 @allowed([ 'Enabled', 'Disabled' ]) 
 param eventHubNetworkAccess string = 'Enabled'
-
-@description('Azure Language service external network access.')
-@allowed([ 'Enabled', 'Disabled' ])
-param languageServiceExternalNetworkAccess string = 'Disabled'
-
-@description('Azure Content Safety external network access.')
-@allowed([ 'Enabled', 'Disabled' ])
-param aiContentSafetyExternalNetworkAccess string = 'Disabled'
 
 @description('AI Foundry external network access.')
 @allowed([ 'Enabled', 'Disabled' ])
@@ -273,9 +265,6 @@ param enableAIGatewayPiiRedaction bool = true
 
 @description('Enable OpenAI realtime capabilities')
 param enableOpenAIRealtime bool = true
-
-@description('Enable AI Foundry integration.')
-param enableAIFoundry bool = true
 
 @description('Enable Microsoft Entra ID authentication for API Management.')
 param entraAuth bool = true
@@ -327,12 +316,6 @@ param cosmosDbRUs int = 400
 
 @description('Logic Apps SKU capacity units.')
 param logicAppsSkuCapacityUnits int = 1
-
-@description('Azure Language service SKU name.')
-param languageServiceSkuName string = 'S'
-
-@description('Azure Content Safety service SKU name.')
-param aiContentSafetySkuName string = 'S0'
 
 @description('SKU for the API Center service.')
 @allowed(['Free', 'Standard'])
@@ -433,19 +416,21 @@ param aiSearchInstances array = [
   // }
 ]
 
-@description('AI Foundry instances configuration array.')
+@description('AI Foundry instances configuration array. The first element (index 0) is the **primary** Foundry resource. The primary Foundry powers the APIM AI Gateway content safety and PII processing capabilities (via the AI Services unified endpoint) AND can also host LLM model deployments. Add more entries to deploy additional Foundry resources in different regions for additional LLM capacity / regional routing. All entries can host LLM deployments declared in aiFoundryModelsConfig. Each entry may optionally set `networkInjectionEnabled: true|false` to opt the specific Foundry resource into (or out of) agent network injection (delegated to Microsoft.App/environments). When omitted, the global `foundryNetworkInjectionEnabled` flag applies. Note: agent subnet is regional - only enable injection for instances in the same region as the VNet.')
 param aiFoundryInstances array = [
   {
     name: !empty(aiFoundryResourceName) ? aiFoundryResourceName : ''
     location: location
     customSubDomainName: ''
     defaultProjectName: 'citadel-governance-project'
+    networkInjectionEnabled: true
   }
   {
     name: !empty(aiFoundryResourceName) ? aiFoundryResourceName : ''
     location: 'eastus2'
     customSubDomainName: ''
     defaultProjectName: 'citadel-governance-project'
+    networkInjectionEnabled: false
   }
 ]
 
@@ -670,7 +655,12 @@ var llmBackendConfig = [for (instance, i) in aiFoundryInstances: {
 }]
 
 var primaryFoundryName = !empty(aiFoundryInstances[0].name) ? aiFoundryInstances[0].name : 'aif-${resourceToken}-0'
-var primaryFoundryEmbeddingsBackendUrl = 'https://${primaryFoundryName}.cognitiveservices.azure.com/openai/deployments/${primaryFoundryEmbeddingModelName}/embeddings'
+// Primary Foundry endpoint - serves APIM AI Gateway as both:
+//   1. Backend URL for `content-safety-backend` (Content Safety API)
+//   2. Named-value `piiServiceUrl` (Language Service / PII detection API)
+// Both APIs are exposed on the AI Services account base endpoint.
+var primaryFoundryEndpoint = 'https://${primaryFoundryName}.cognitiveservices.azure.com/'
+var primaryFoundryEmbeddingsBackendUrl = '${primaryFoundryEndpoint}openai/deployments/${primaryFoundryEmbeddingModelName}/embeddings'
 
 var openAiPrivateDnsZoneName = 'privatelink.openai.azure.com'
 var keyVaultPrivateDnsZoneName = 'privatelink.vaultcore.azure.net'
@@ -766,6 +756,10 @@ module vnet './modules/networking/vnet.bicep' = if(!useExistingVnet) {
     privateEndpointNsgName: !empty(privateEndpointNsgName) ? privateEndpointNsgName : 'nsg-pe-${resourceToken}'
     functionAppSubnetName: !empty(functionAppSubnetName) ? functionAppSubnetName : 'snet-functionapp'
     functionAppNsgName: !empty(functionAppNsgName) ? functionAppNsgName : 'nsg-functionapp-${resourceToken}'
+    enableAgentSubnet: foundryNetworkInjectionEnabled
+    agentSubnetName: !empty(agentSubnetName) ? agentSubnetName : 'snet-agents'
+    agentSubnetNsgName: !empty(agentSubnetNsgName) ? agentSubnetNsgName : 'nsg-agents-${resourceToken}'
+    agentSubnetAddressPrefix: agentSubnetPrefix
     vnetAddressPrefix: vnetAddressPrefix
     apimSubnetAddressPrefix: apimSubnetPrefix
     isAPIMV2SKU: apimSku == 'StandardV2' || apimSku == 'PremiumV2'
@@ -789,6 +783,7 @@ module vnetExisting './modules/networking/vnet-existing.bicep' = if(useExistingV
     apimSubnetName: !empty(apimSubnetName) ? apimSubnetName : 'snet-apim'
     privateEndpointSubnetName: !empty(privateEndpointSubnetName) ? privateEndpointSubnetName : 'snet-private-endpoint'
     functionAppSubnetName: !empty(functionAppSubnetName) ? functionAppSubnetName : 'snet-functionapp'
+    agentSubnetName: foundryNetworkInjectionEnabled ? agentSubnetName : ''
     vnetRG: existingVnetRG
   }
   dependsOn: [
@@ -846,56 +841,6 @@ module monitoring './modules/monitor/monitoring.bicep' = {
   }
 }
 
-module contentSafety 'modules/ai/cognitiveservices.bicep' = {
-  name: 'ai-content-safety'
-  scope: resourceGroup
-  params: {
-    name: !empty(aiContentSafetyName) ? aiContentSafetyName : '${abbrs.cognitiveServicesAccounts}consafety-${resourceToken}'
-    location: location
-    tags: tags
-    kind: 'ContentSafety'
-    managedIdentityName: apimManagedIdentity.outputs.managedIdentityName
-    vNetName: useExistingVnet ? vnetExisting.outputs.vnetName : vnet.outputs.vnetName
-    vNetLocation: useExistingVnet ? vnetExisting.outputs.location : vnet.outputs.location
-    privateEndpointSubnetName: useExistingVnet ? vnetExisting.outputs.privateEndpointSubnetName : vnet.outputs.privateEndpointSubnetName
-    aiPrivateEndpointName: !empty(aiContentSafetyPrivateEndpointName) ? aiContentSafetyPrivateEndpointName : '${abbrs.cognitiveServicesAccounts}consafety-pe-${resourceToken}'
-    publicNetworkAccess: aiContentSafetyExternalNetworkAccess
-    openAiDnsZoneName: aiCogntiveServicesDnsZoneName
-    sku: {
-      name: aiContentSafetySkuName
-    }
-    vNetRG: useExistingVnet ? vnetExisting.outputs.vnetRG : vnet.outputs.vnetRG
-    dnsZoneRG: !useExistingVnet ? resourceGroup.name : dnsZoneRG
-    dnsSubscriptionId: !empty(dnsSubscriptionId) ? dnsSubscriptionId : subscription().subscriptionId
-    dnsZoneResourceId: existingCognitiveServicesDnsZoneId
-  }
-}
-
-module languageService 'modules/ai/cognitiveservices.bicep' = {
-  name: 'ai-language-service'
-  scope: resourceGroup
-  params: {
-    name: !empty(languageServiceName) ? languageServiceName : '${abbrs.cognitiveServicesAccounts}language-${resourceToken}'
-    location: location
-    tags: tags
-    kind: 'TextAnalytics'
-    managedIdentityName: apimManagedIdentity.outputs.managedIdentityName
-    vNetName: useExistingVnet ? vnetExisting.outputs.vnetName : vnet.outputs.vnetName
-    vNetLocation: useExistingVnet ? vnetExisting.outputs.location : vnet.outputs.location
-    privateEndpointSubnetName: useExistingVnet ? vnetExisting.outputs.privateEndpointSubnetName : vnet.outputs.privateEndpointSubnetName
-    aiPrivateEndpointName: !empty(languageServicePrivateEndpointName) ? languageServicePrivateEndpointName : '${abbrs.cognitiveServicesAccounts}language-pe-${resourceToken}'
-    publicNetworkAccess: languageServiceExternalNetworkAccess
-    openAiDnsZoneName: aiCogntiveServicesDnsZoneName
-    sku: {
-      name: languageServiceSkuName
-    }
-    vNetRG: useExistingVnet ? vnetExisting.outputs.vnetRG : vnet.outputs.vnetRG
-    dnsZoneRG: !useExistingVnet ? resourceGroup.name : dnsZoneRG
-    dnsSubscriptionId: !empty(dnsSubscriptionId) ? dnsSubscriptionId : subscription().subscriptionId
-    dnsZoneResourceId: existingCognitiveServicesDnsZoneId
-  }
-}
-
 module keyVault './modules/keyvault/keyvault.bicep' = {
   name: 'key-vault'
   scope: resourceGroup
@@ -917,7 +862,13 @@ module keyVault './modules/keyvault/keyvault.bicep' = {
   }
 }
 
-module foundry 'modules/foundry/foundry.bicep' = if(enableAIFoundry) {
+// AI Foundry deployment.
+// The first element of `aiFoundryInstances` is the **primary** Foundry resource. Its endpoint is
+// reused by APIM as the backend for content safety and as the named-value URL for PII / language
+// processing (both APIs are exposed on the unified AI Services endpoint of the account).
+// Additional entries in `aiFoundryInstances` simply provide more regional Foundry resources that
+// can host LLM model deployments declared in `aiFoundryModelsConfig`.
+module foundry 'modules/foundry/foundry.bicep' = {
   name: 'ai-foundry'
   scope: resourceGroup
   params: {
@@ -942,6 +893,8 @@ module foundry 'modules/foundry/foundry.bicep' = if(enableAIFoundry) {
     dnsZoneRG: !useExistingVnet ? resourceGroup.name : dnsZoneRG
     dnsSubscriptionId: !empty(dnsSubscriptionId) ? dnsSubscriptionId : subscription().subscriptionId
     dnsZoneResourceIds: aiFoundryDnsZoneResourceIds
+    networkInjectionEnabled: foundryNetworkInjectionEnabled
+    agentSubnetName: foundryNetworkInjectionEnabled ? (useExistingVnet ? vnetExisting.outputs.agentSubnetName : vnet.outputs.agentSubnetName) : ''
     // Key Vault connection parameters
     keyVaultId: keyVault.outputs.keyVaultId
     keyVaultUri: keyVault.outputs.keyVaultUri
@@ -1034,8 +987,8 @@ module apim './modules/apim/apim.bicep' = {
     eventHubPIIName: eventHub.outputs.eventHubPIIName
     eventHubPIIEndpoint: eventHub.outputs.eventHubEndpoint
     apimSubnetId: useExistingVnet ? vnetExisting.outputs.apimSubnetId : vnet.outputs.apimSubnetId
-    aiLanguageServiceUrl: languageService.outputs.aiServiceEndpoint
-    contentSafetyServiceUrl: contentSafety.outputs.aiServiceEndpoint
+    aiLanguageServiceUrl: primaryFoundryEndpoint
+    contentSafetyServiceUrl: primaryFoundryEndpoint
     apimNetworkType: apimNetworkType
     enablePIIAnonymization: enableAIGatewayPiiRedaction
     enableAIModelInference: enableAIModelInference
@@ -1047,8 +1000,8 @@ module apim './modules/apim/apim.bicep' = {
     enableRedisCache: enableManagedRedis
     redisCacheConnectionString: enableManagedRedis ? managedRedis.outputs.redisCacheConnectionString : ''
     redisCacheResourceId: enableManagedRedis ? managedRedis.outputs.redisResourceId : ''
-    enableEmbeddingsBackend: enableManagedRedis && enableAIFoundry
-    embeddingsBackendUrl: enableManagedRedis && enableAIFoundry ? primaryFoundryEmbeddingsBackendUrl : ''
+    enableEmbeddingsBackend: enableManagedRedis
+    embeddingsBackendUrl: enableManagedRedis ? primaryFoundryEmbeddingsBackendUrl : ''
     sku: apimSku
     skuCount: apimSkuUnits
     usePrivateEndpoint: apimV2UsePrivateEndpoint
@@ -1179,7 +1132,7 @@ module apiCenterOnboarding './modules/apim/api-center-onboarding-all.bicep' = if
 }
 
 // Grant AI Foundry resources access to Key Vault (deployed after both Key Vault and Foundry)
-module keyVaultFoundryRbac './modules/keyvault/keyvault-rbac.bicep' = if(enableAIFoundry) {
+module keyVaultFoundryRbac './modules/keyvault/keyvault-rbac.bicep' = {
   name: 'key-vault-foundry-rbac'
   scope: resourceGroup
   params: {
@@ -1196,7 +1149,7 @@ output APIM_NAME string = apim.outputs.apimName
 output APIM_AOI_PATH string = apim.outputs.apimOpenaiApiPath
 output APIM_GATEWAY_URL string = apim.outputs.apimGatewayUrl
 output AZURE_RESOURCE_GROUP string = resourceGroup.name
-output AI_FOUNDRY_SERVICES array = enableAIFoundry ? foundry!.outputs.extendedAIServicesConfig : []
+output AI_FOUNDRY_SERVICES array = foundry.outputs.extendedAIServicesConfig
 output LLM_BACKEND_CONFIG array = llmBackendConfig
 output KEY_VAULT_NAME string = keyVault.outputs.keyVaultName
 output KEY_VAULT_URI string = keyVault.outputs.keyVaultUri

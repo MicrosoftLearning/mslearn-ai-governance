@@ -81,7 +81,6 @@ azd env new ai-hub-citadel-dev
 # Set custom environment variables
 azd env set AZURE_LOCATION eastus2
 azd env set APIM_SKU Developer
-azd env set ENABLE_AI_FOUNDRY true
 
 # Deploy
 azd up
@@ -95,7 +94,6 @@ azd up
 | `APIM_SKU` | `StandardV2` | API Management SKU |
 | `COSMOS_DB_RUS` | `400` | Cosmos DB throughput |
 | `EVENTHUB_CAPACITY` | `1` | Event Hub capacity units |
-| `ENABLE_AI_FOUNDRY` | `true` | Deploy AI Foundry instances |
 | `ENABLE_API_CENTER` | `true` | Enable API Center registry |
 
 For full list of variables, see [/bicep/infra/main.bicepparam](../bicep/infra/main.bicepparam).
@@ -220,7 +218,6 @@ The quick deployment uses these defaults (from `main.bicepparam`):
 | **Event Hub** | `eventHubCapacityUnits` | `1` |
 | **Network** | `useExistingVnet` | `false` (creates new) |
 | **Log Analytics** | `useExistingLogAnalytics` | `false` (creates new) |
-| **AI Foundry** | `enableAIFoundry` | `true` |
 | **API Center** | `enableAPICenter` | `true` |
 | **PII Detection** | `enableAIGatewayPiiRedaction` | `true` |
 

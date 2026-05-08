@@ -40,7 +40,7 @@
             return !allowedModels.Any(m => m == requestedModel);
         }">
             <return-response>
-                <set-status code="403" reason="Forbidden" />
+                <set-status code="403" reason="Forbidden model access" />
                 <set-header name="Content-Type" exists-action="override">
                     <value>application/json</value>
                 </set-header>

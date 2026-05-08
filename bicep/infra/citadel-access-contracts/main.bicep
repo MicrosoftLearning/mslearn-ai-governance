@@ -40,6 +40,8 @@ param foundry object = {
 param foundryConfig object = {
   // Connection naming: if empty, uses useCase naming convention
   connectionNamePrefix: ''
+  // Foundry connection category: ApiManagement or ModelGateway
+  connectionCategory: 'ApiManagement'
   // Whether deployment name is in URL path (true) or request body (false)
   deploymentInPath: 'false'
   // Share connection to all project users
@@ -141,6 +143,7 @@ module foundryConnections 'modules/foundryConnection.bicep' = [for (s, i) in ser
     connectionName: '${foundryConnectionPrefix}-${s.code}'
     targetUrl: '${apimSvc.properties.gatewayUrl}/${onboard[i].outputs.apiPath}'
     apimSubscriptionKey: onboard[i].outputs.subscriptionPrimaryKey
+    connectionCategory: foundryConfig.?connectionCategory ?? 'ApiManagement'
     isSharedToAll: foundryConfig.?isSharedToAll ?? false
     deploymentInPath: foundryConfig.?deploymentInPath ?? 'false'
     inferenceAPIVersion: foundryConfig.?inferenceAPIVersion ?? ''

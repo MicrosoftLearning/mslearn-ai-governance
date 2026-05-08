@@ -239,6 +239,36 @@ resource validateModelAccessFragment 'Microsoft.ApiManagement/service/policyFrag
 }
 
 /**
+ * Policy Fragment: Responses API ID Security (inbound)
+ * Enforces per-subscription ownership of OpenAI Responses API response_id values
+ * and hydrates routing for GET/DELETE operations on /responses/{id}.
+ */
+resource responsesIdSecurityFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  parent: apimService
+  name: 'responses-id-security'
+  properties: {
+    description: 'Inbound: validates response_id ownership and hydrates routing for /responses operations'
+    value: loadTextContent('./policies/frag-responses-id-security.xml')
+    format: 'rawxml'
+  }
+}
+
+/**
+ * Policy Fragment: Responses API ID Cache Store (outbound)
+ * Records response_id → "<subscriptionId>|<requestedModel>|<userId>" in APIM cache
+ * after a successful POST /responses, enabling subsequent ownership checks.
+ */
+resource responsesIdCacheStoreFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  parent: apimService
+  name: 'responses-id-cache-store'
+  properties: {
+    description: 'Outbound: caches response_id ownership for newly created Responses API objects'
+    value: loadTextContent('./policies/frag-responses-id-cache-store.xml')
+    format: 'rawxml'
+  }
+}
+
+/**
  * Policy Fragment: Metadata Configuration
  * Provides centralized configuration for the Unified AI API with dynamically generated model mappings
  */
@@ -273,6 +303,12 @@ output validateModelAccessFragmentName string = validateModelAccessFragment.name
 
 @description('Name of the metadata-config fragment')
 output metadataConfigFragmentName string = metadataConfigFragment.name
+
+@description('Name of the responses-id-security fragment')
+output responsesIdSecurityFragmentName string = responsesIdSecurityFragment.name
+
+@description('Name of the responses-id-cache-store fragment')
+output responsesIdCacheStoreFragmentName string = responsesIdCacheStoreFragment.name
 
 @description('Generated backend pools configuration code')
 output backendPoolsCode string = backendPoolsCode

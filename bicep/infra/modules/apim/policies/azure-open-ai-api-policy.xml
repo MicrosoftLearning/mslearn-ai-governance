@@ -25,7 +25,13 @@
         
         <!-- Step 2: Extract and validate model parameter from request -->
         <include-fragment fragment-id="set-llm-requested-model" />
-        
+
+        <!-- Step 2.1: Responses API ownership enforcement (cross-API shared fragment).
+             For /responses* operations: validates that response_id (URL or previous_response_id)
+             belongs to the calling subscription, returns 403 on mismatch / 404 on cache miss,
+             and hydrates `requestedModel` from cache so backend routing works for GET/DELETE. -->
+        <include-fragment fragment-id="responses-id-security" />
+
         <!-- Step 3: Inject model parameter into request body if not present -->
         <choose>
             <when condition="@((string)context.Variables["requestedModel"] != "non-llm-request")">
@@ -97,6 +103,8 @@
     </backend>
     <outbound>
         <base />
+        <!-- Cache response_id → owner mapping for successful POST /responses (cross-API shared fragment). -->
+        <include-fragment fragment-id="responses-id-cache-store" />
         <include-fragment fragment-id="set-response-headers" />
     </outbound>
     <on-error>

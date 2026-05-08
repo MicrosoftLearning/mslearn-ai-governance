@@ -90,6 +90,9 @@ param vnetName = 'vnet-hub-eastus'
 param existingVnetRG = 'rg-network-hub'
 param apimSubnetName = 'snet-citadel-apim'
 param privateEndpointSubnetName = 'snet-citadel-private-endpoints'
+// Required when foundryNetworkInjectionEnabled = true (default).
+// Subnet must be delegated to Microsoft.App/environments.
+param agentSubnetName = 'snet-citadel-agents'
 param dnsZoneRG = 'rg-network-hub'
 param dnsSubscriptionId = '<hub-subscription-id>'
 ```
@@ -196,6 +199,10 @@ param vnetAddressPrefix = '10.170.0.0/24'
 param apimSubnetPrefix = '10.170.0.0/26'
 param privateEndpointSubnetPrefix = '10.170.0.64/26'
 param functionAppSubnetPrefix = '10.170.0.128/26'
+// AI Foundry agent (network injection) subnet - delegated to Microsoft.App/environments.
+// Provisioned automatically when foundryNetworkInjectionEnabled = true (default).
+param agentSubnetPrefix = '10.170.0.192/26'
+param foundryNetworkInjectionEnabled = true
 param dnsZoneRG = 'rg-network-hub'
 param dnsSubscriptionId = '<hub-subscription-id>'
 
@@ -224,6 +231,11 @@ param vnetAddressPrefix = '10.170.0.0/24'
 param apimSubnetPrefix = '10.170.0.0/26'
 param privateEndpointSubnetPrefix = '10.170.0.64/26'
 param functionAppSubnetPrefix = '10.170.0.128/26'
+param agentSubnetPrefix = '10.170.0.192/26'
+
+// AI Foundry agent network injection (enabled by default).
+// Set to false to skip the agent subnet and disable Foundry network injection.
+param foundryNetworkInjectionEnabled = true
 
 // Network access
 param apimNetworkType = 'External'  // or 'Internal' for production
@@ -231,11 +243,12 @@ param apimV2UsePrivateEndpoint = true
 ```
 
 **Includes:**
-- ✅ Virtual Network with subnets
-- ✅ Network Security Groups
+- ✅ Virtual Network with subnets (APIM, Private Endpoints, Function App, **Agent** when network injection enabled)
+- ✅ Network Security Groups (one per subnet)
 - ✅ Private DNS Zones
 - ✅ Private Endpoints for all services
 - ✅ Route table (needed for APIM Developer and Premium SKUs)
+- ✅ Agent subnet delegated to `Microsoft.App/environments` for AI Foundry network injection
 
 ---
 
@@ -252,6 +265,10 @@ param existingVnetRG = 'rg-network-prod'
 param apimSubnetName = 'snet-citadel-apim'
 param privateEndpointSubnetName = 'snet-citadel-pe'
 param functionAppSubnetName = 'snet-citadel-functions'
+// Required when foundryNetworkInjectionEnabled = true (default).
+// The subnet must already exist and be delegated to Microsoft.App/environments.
+param agentSubnetName = 'snet-citadel-agents'
+param foundryNetworkInjectionEnabled = true
 
 // DNS configuration
 param existingPrivateDnsZones = {
@@ -262,12 +279,14 @@ param existingPrivateDnsZones = {
 
 **Prerequisites:**
 1. VNet with sufficient address space
-2. Three subnets created (see [Subnet Requirements](#subnet-requirements))
+2. Subnets created (see [Subnet Requirements](#subnet-requirements))
     - APIM subnet /26 or larger
     - Function App subnet /26 or larger
     - Private Endpoints subnet /26 or larger
+    - Agent subnet /26 or larger (only when `foundryNetworkInjectionEnabled = true`)
 3. Private DNS zones created and linked (see [Required DNS Zones](#required-dns-zones))
 4. NSG rules configured for APIM subnet (see [APIM Subnet](#apim-subnet))
+5. Agent subnet delegated to `Microsoft.App/environments` (see [Agent Subnet (AI Foundry Network Injection)](#agent-subnet-ai-foundry-network-injection))
 
 ---
 
@@ -367,6 +386,74 @@ Dedicated subnet with `/26` or larger for all private endpoints:
 ```
 
 > For APIM V2 SKUs, private endpoints in this subnet enable private inbound connectivity.
+
+---
+
+### Agent Subnet (AI Foundry Network Injection)
+
+When `foundryNetworkInjectionEnabled = true` (default), AI Foundry accounts are network-injected into a dedicated subnet so that Foundry agents and managed compute communicate over your VNet rather than the Microsoft-managed network. The subnet must be delegated to `Microsoft.App/environments`.
+
+**Sizing:** `/26` or larger recommended. Greenfield default is `10.170.0.192/26`.
+
+**Subnet definition (matches what the accelerator provisions on greenfield):**
+
+```bicep
+{
+  name: 'snet-citadel-agents'
+  properties: {
+    addressPrefix: '10.x.x.x/26'
+    privateEndpointNetworkPolicies: 'Enabled'
+    privateLinkServiceNetworkPolicies: 'Enabled'
+    delegations: [
+      {
+        name: 'Microsoft.app/environments'
+        properties: {
+          serviceName: 'Microsoft.App/environments'
+        }
+      }
+    ]
+  }
+}
+```
+
+**Brownfield (existing VNet) requirements:**
+- Subnet must already exist with the `Microsoft.App/environments` delegation above.
+- No other workload may share the subnet (delegation is exclusive).
+- Pass the subnet name via `agentSubnetName`.
+
+**Disabling network injection:**
+
+```bicep
+param foundryNetworkInjectionEnabled = false
+// agentSubnetName / agentSubnetPrefix are then ignored
+```
+
+When disabled, AI Foundry uses the Microsoft-managed network and no agent subnet is provisioned.
+
+**Per-instance opt-in / opt-out:**
+
+The agent subnet is regional. When deploying multiple Foundry instances across regions (`aiFoundryInstances`), only the instance(s) in the same region as the VNet can use network injection. Use the per-instance `networkInjectionEnabled` flag to control this:
+
+```bicep
+param aiFoundryInstances = [
+  {
+    name: ''
+    location: 'eastus'              // same region as VNet
+    customSubDomainName: ''
+    defaultProjectName: 'citadel-governance-project'
+    networkInjectionEnabled: true   // injected into agent subnet
+  }
+  {
+    name: ''
+    location: 'eastus2'             // different region
+    customSubDomainName: ''
+    defaultProjectName: 'citadel-governance-project'
+    networkInjectionEnabled: false  // uses Microsoft-managed network
+  }
+]
+```
+
+When the property is omitted, the global `foundryNetworkInjectionEnabled` flag applies. The global flag must also be `true` for any per-instance injection to take effect.
 
 ---
 
@@ -471,9 +558,7 @@ Although the accelerator deploys services with private endpoints by default with
 | **API Management (StandardV2/PremiumV2)** | `apimV2PublicNetworkAccess` | `true` | `true`, `false` | Allow public network access. Set to `false` to restrict to private endpoint only. |
 | **Cosmos DB** | `cosmosDbPublicAccess` | `Disabled` | `Enabled`, `Disabled` | Public network access for Cosmos DB. Keep `Disabled` for secure deployments. |
 | **Event Hub** | `eventHubNetworkAccess` | `Enabled` | `Enabled`, `Disabled` | Public network access. Note: Must be `Enabled` during initial provisioning for APIM V2 SKUs. |
-| **Azure Language Service** | `languageServiceExternalNetworkAccess` | `Disabled` | `Enabled`, `Disabled` | External network access for PII redaction and text analytics. |
-| **Azure Content Safety** | `aiContentSafetyExternalNetworkAccess` | `Disabled` | `Enabled`, `Disabled` | External network access for content moderation service. |
-| **AI Foundry** | `aiFoundryExternalNetworkAccess` | `Disabled` | `Enabled`, `Disabled` | External network access for AI Foundry resources. |
+| **AI Foundry** | `aiFoundryExternalNetworkAccess` | `Disabled` | `Enabled`, `Disabled` | External network access for the AI Foundry / AI Services resources (also serves Content Safety and Language / PII APIs from the **primary** Foundry account). |
 | **Azure Monitor** | `useAzureMonitorPrivateLinkScope` | `false` | `true`, `false` | Use Private Link Scope for Log Analytics and Application Insights. Requires additional configuration. |
 
 **Configuration Example:**
@@ -485,8 +570,6 @@ param apimV2UsePrivateEndpoint = true
 param apimV2PublicNetworkAccess = false
 param cosmosDbPublicAccess = 'Disabled'
 param eventHubNetworkAccess = 'Disabled'  // Set after initial deployment
-param languageServiceExternalNetworkAccess = 'Disabled'
-param aiContentSafetyExternalNetworkAccess = 'Disabled'
 param aiFoundryExternalNetworkAccess = 'Disabled'
 param useAzureMonitorPrivateLinkScope = true
 ```

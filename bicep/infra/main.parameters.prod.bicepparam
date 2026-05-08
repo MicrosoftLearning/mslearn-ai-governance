@@ -31,7 +31,6 @@ param createAppInsightsDashboards = true
 
 // Enable all production features
 param enableAPICenter = true
-param enableAIFoundry = true
 param enableAIGatewayPiiRedaction = true
 param enableAIModelInference = true
 // Azure Managed Redis (AMR)
@@ -55,8 +54,6 @@ param apimV2UsePrivateEndpoint = true
 param apimV2PublicNetworkAccess = false
 param cosmosDbPublicAccess = 'Disabled'
 param eventHubNetworkAccess = 'Disabled'
-param languageServiceExternalNetworkAccess = 'Disabled'
-param aiContentSafetyExternalNetworkAccess = 'Disabled'
 param keyVaultExternalNetworkAccess = 'Disabled'
 
 // Key Vault SKU (premium recommended for production for HSM support)

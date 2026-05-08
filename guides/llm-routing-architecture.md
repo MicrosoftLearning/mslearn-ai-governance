@@ -188,6 +188,34 @@ Logic:
 - If not found, attempts to extract from request body `model` field (Inference pattern)
 - Returns empty string if no pattern matches
 
+#### Step 1.5: Responses API ID Security (`responses-id-security` / `responses-id-cache-store`)
+
+The OpenAI **Responses API** (`POST /responses`, `GET /responses/{response_id}`, `GET /responses/{response_id}/input_items`, `DELETE /responses/{response_id}`) is stateful: a `response_id` returned by the backend can be re-used by the client to fetch or chain (`previous_response_id`) prior outputs. To prevent **cross-subscription access** to those server-side conversations, the gateway adds a single shared pair of fragments that are wired into all three API surfaces (Azure OpenAI API, Universal LLM API, Unified AI API):
+
+| Fragment | Stage | Responsibility |
+|---|---|---|
+| `responses-id-security` | inbound | Detects `/responses*` routes, resolves the `response_id` (URL path or `previous_response_id` body), looks up its owner in APIM cache, returns **403** on subscription mismatch and **404** when no cache entry exists for a GET/DELETE. For GET/DELETE it also **hydrates `requestedModel`** from the cache so model-based routing keeps working for those previously model-less operations. |
+| `responses-id-cache-store` | outbound | After a successful `POST /responses`, parses the response body, extracts `id`, and writes `key=response-id-{id}` → `value=<subscriptionId>\|<requestedModel>\|<userId>` to APIM internal cache (24h TTL). |
+
+Cache contract:
+
+```
+key   = "response-id-" + response_id
+value = "<subscriptionId>|<requestedModel>|<userId>"   // userId from JWT 'azp' claim, falling back to subscription name
+ttl   = 86400 seconds
+```
+
+Routing impact on `set-target-backend-pool`:
+
+- For `POST /responses`, model-based routing is unchanged (model is in body or path).
+- For `GET /responses/{id}` and `DELETE /responses/{id}`, the inbound fragment hydrates `requestedModel` from the cache, so `set-target-backend-pool` resolves the **same backend pool** that served the original `POST` — guaranteeing consistent per-conversation backend affinity without any new branches in `set-target-backend-pool` itself.
+- For Unified AI, an `apiTypeOverrideBackend` may also be configured for the `responses` api-type; the override still wins, but the ownership check runs first.
+
+Diagnostic outputs:
+
+- `x-aihub-response-id-cached` response header echoes the just-cached id after a successful POST.
+- Trace source `Responses-API-Security` logs hydration, ownership mismatches, and cache misses.
+
 #### Step 2: Backend Pool Configuration (set-backend-pools)
 
 The `set-backend-pools` fragment loads all available backend pools:
@@ -332,13 +360,15 @@ Analyzes the incoming request to detect the API type and extract the model. This
 
 **API Type Detection:**
 1. Removes the API path prefix (`/unified-ai`) from the request URL
-2. Matches the remaining path against configured `base-path` patterns in `config-api-types`
-3. Rejects unrecognized paths with a `403 Forbidden` response
+2. Matches the remaining path against configured `base-path` patterns in `config-api-types` using **case-insensitive prefix matching (`StartsWith`)** and selects the **longest matching base-path** so nested prefixes (e.g. `/openai/v1/responses` vs `/openai/v1` vs `/openai`) always resolve to the most specific api-type independent of declaration order
+3. Rejects unrecognized paths with a `403 Forbidden` response (`PathNotAllowed`). For example, `/v2/openai/chat/completions` does **not** match `/openai` and is rejected with 403
 
 **Model Extraction** (in priority order):
-1. **GET/DELETE requests**: Returns `"non-llm-request"` (handled by operation-level policies)
+1. **GET requests, and DELETE on `/responses*`**: Returns `"non-llm-request"` (operation-level policies handle these). For `/responses/{id}` GET/DELETE the model is later **hydrated from the response-id ownership cache** by `responses-id-security` so model-based routing in `set-target-backend-pool` and `path-builder` still selects the original backend.
 2. **Request body**: Extracts `model` field from JSON body
 3. **URL path segment**: Extracts model from path using `api-path-segment` (e.g., `/openai/deployments/{model}/...`)
+
+> **Note**: `request-processor` no longer short-circuits GET/DELETE requests — `api-type`, `api-base-path`, `apiTypeOverrideBackend`, and `skipBackendUrlRewrite` are always populated. This is required so that `path-builder` can correctly construct backend paths such as `{api-base-path}/{response-id}` for Responses API GET/DELETE after `responses-id-security` hydrates the model.
 
 **Output Variables:**
 - `api-type`: Detected API type (e.g., `openai`, `inference`, `geminiopenai`)

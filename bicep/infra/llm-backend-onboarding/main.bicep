@@ -226,5 +226,8 @@ output policyFragments object = {
   setBackendAuthorization: llmPolicyFragments.outputs.setBackendAuthorizationFragmentName
   setTargetBackendPool: llmPolicyFragments.outputs.setTargetBackendPoolFragmentName
   getAvailableModels: llmPolicyFragments.outputs.getAvailableModelsFragmentName
+  validateModelAccess: llmPolicyFragments.outputs.validateModelAccessFragmentName
   metadataConfig: llmPolicyFragments.outputs.metadataConfigFragmentName
+  responsesIdSecurity: llmPolicyFragments.outputs.responsesIdSecurityFragmentName
+  responsesIdCacheStore: llmPolicyFragments.outputs.responsesIdCacheStoreFragmentName
 }

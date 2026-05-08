@@ -72,7 +72,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2022-05-01' = {
     allowBlobPublicAccess: false
     accessTier: 'Hot'
     networkAcls: {
-      bypass: 'None'
+      bypass: 'AzureServices'
       defaultAction: 'Deny'
     }
   }
