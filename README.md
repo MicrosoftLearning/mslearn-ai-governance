@@ -300,7 +300,6 @@ Master AI Citadel Governance Hub implementation and operations with our detailed
 | [**🆕 PII Detection & Masking**](./guides/pii-masking-apim.md) | Automated sensitive data protection |
 | [**🆕 Entra ID Authentication**](./guides/entraid-auth-validation.md) | JWT validation and Zero Trust implementation |
 | [**🆕 JWT Client Identity & Permissions**](./guides/jwt-client-identity-permissions.md) | Configure client app identities, group-based access management, and permissions for JWT-protected endpoints |
-| [**🆕 Agent Governance Toolkit Integration**](./guides/agent-governance-toolkit-integration.md) | Add agent-level governance (per-action policies, trust scoring, audit logging) alongside gateway controls |
 
 ### 📊 **Observability & Analytics**
 
