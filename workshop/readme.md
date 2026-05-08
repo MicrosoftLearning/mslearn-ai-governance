@@ -2,7 +2,7 @@
 
 **Duration:** ~3 hours  
 **Level:** Intermediate  
-**Last updated:** April 2026
+**Last updated:** May 2026
 
 This lab uses a simple hub-and-spoke architecture. `azd up` deploys the Citadel Hub into your Azure subscription: the shared governance plane centered on API Management, observability, policy enforcement, and the core AI platform resources. After that, you run `workshop/scripts/deploy-spoke-foundry.*` to deploy a sample Citadel Spoke: an Azure AI Foundry workload that connects to the hub as a governed backend. Your laptop is the third execution point in the lab. It acts like another spoke/client environment because all deployment commands, notebooks, and validation traffic originate there and flow through the hub.
 
@@ -40,7 +40,7 @@ Citadel Governance Hub is an enterprise-grade AI landing zone that provides a ce
 | Time | Activity |
 |------|----------|
 | 0:00 – 0:15 | Verify pre-requisites, environment setup |
-| 0:15 – 1:00 | **Lab 1** — Deploy Citadel (`azd up`) |
+| 0:15 – 1:00 | **Lab 1** — Deploy Citadel Hub (`azd up`) + Spoke (script) |
 | 1:00 – 1:30 | **Lab 2** — Review deployed services in Azure Portal |
 | 1:30 – 2:30 | **Lab 3** — Run validation notebooks |
 | 2:30 – 3:00 | **Lab 4** — Explore observability and telemetry |
@@ -86,7 +86,7 @@ You need a laptop where you can install software. The following tools are requir
 ### 2.3 Network Requirements
 
 - Ability to connect to the Internet and Azure services
-- Wi-Fi access will be provided by the workshop organizer
+- You can use Wi-Fi provided by the workshop organizer or your own connectivity (e.g. if you are running this lab from home)
 
 ### 2.4 Register Azure Resource Providers
 
@@ -152,39 +152,7 @@ git checkout workshop
 > azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator -e citadel-workshop --branch citadel-v1
 > ```
 
-### 3.2 Copy Workshop Files
-
-The workshop ships with pre-configured files tailored for the lab environment. Copy them into the Bicep infrastructure folder so that `azd up` picks them up:
-
-**Bash:**
-```bash
-cp workshop/bicep/infra/main.bicep bicep/infra/main.bicep
-cp workshop/bicep/infra/main.workshop.bicepparam bicep/infra/main.bicepparam
-
-cp workshop/bicep/infra/modules/foundry/foundry.bicep bicep/infra/modules/foundry/foundry.bicep
-cp workshop/bicep/infra/modules/keyvault/keyvault-rbac.bicep bicep/infra/modules/keyvault/keyvault-rbac.bicep
-cp workshop/bicep/infra/modules/keyvault/keyvault.bicep bicep/infra/modules/keyvault/keyvault.bicep
-
-cp workshop/bicep/infra/citadel-access-contracts/modules/foundryConnection.bicep bicep/infra/citadel-access-contracts/modules/foundryConnection.bicep
-cp workshop/bicep/infra/citadel-access-contracts/main.bicep bicep/infra/citadel-access-contracts/main.bicep
-```
-
-**PowerShell:**
-```powershell
-Copy-Item workshop\bicep\infra\main.bicep bicep\infra\main.bicep
-Copy-Item workshop\bicep\infra\main.workshop.bicepparam bicep\infra\main.bicepparam
-
-Copy-Item workshop\bicep\infra\modules\foundry\foundry.bicep bicep\infra\modules\foundry\foundry.bicep
-Copy-Item workshop\bicep\infra\modules\keyvault\keyvault-rbac.bicep bicep\infra\modules\keyvault\keyvault-rbac.bicep
-Copy-Item workshop\bicep\infra\modules\keyvault\keyvault.bicep bicep\infra\modules\keyvault\keyvault.bicep
-
-Copy-Item workshop\bicep\infra\citadel-access-contracts\modules\foundryConnection.bicep bicep\infra\citadel-access-contracts\modules\foundryConnection.bicep
-Copy-Item workshop\bicep\infra\citadel-access-contracts\main.bicep bicep\infra\citadel-access-contracts\main.bicep
-```
-
-> **Why?** The workshop parameter file (`main.workshop.bicepparam`) has sensible defaults for the lab — including public network access to AI Foundry, pre-configured model deployments, and simplified networking settings — so you can focus on learning instead of tweaking parameters. The workshop `main.bicep` routes PII processing through the first AI Foundry service instead of deploying a separate Azure Language service. The workshop `foundry.bicep` module includes patches required for the lab environment.
-
-### 3.3 Authenticate to Azure
+### 3.2 Authenticate to Azure
 
 ```bash
 # Login to Azure CLI
@@ -203,13 +171,15 @@ az login --tenant-id <your-tenant-id>
 azd auth login --tenant-id <your-tenant-id>
 ```
 
-### 3.4 Create a New Environment
+### 3.3 Create a New Environment
 
 ```bash
 azd env new citadel-workshop
 ```
 
-### 3.5 Configure Environment (Optional Customization)
+### 3.4 Configure Environment (Optional)
+
+> **This section is optional** and can be skipped for the lab. It is provided in case you want to experiment with specific settings.
 
 The defaults work well for the workshop. However, you may want to set the Azure region:
 
@@ -228,7 +198,9 @@ azd env set ENABLE_MANAGED_REDIS false
 azd env set ENABLE_AZURE_AI_SEARCH false
 ```
 
-### 3.6 Deploy
+### 3.5 Deploy
+
+> **Recommended region:** For this lab, **Sweden Central** (`swedencentral`) is the recommended region.
 
 ```bash
 azd up
@@ -244,7 +216,7 @@ Then the deployment begins. **This takes approximately 30-45 minutes.**
 
 > **Transient errors:** Deployment of some resources (such as model deployments) may occasionally fail with a transient error. If `azd up` fails, simply re-run the command — it will pick up where it left off.
 
-### 3.7 Verify Deployment
+### 3.6 Verify Deployment
 
 Once `azd up` completes:
 
@@ -256,33 +228,27 @@ Once `azd up` completes:
 azd env get-values
 ```
 
-### 3.8 Deploy the Sample Spoke
+### 3.7 Deploy the Sample Spoke
 
 After `azd up` finishes, run the spoke deployment script from the `workshop` folder.
 
 **PowerShell:**
 ```powershell
-.\scripts\deploy-spoke-foundry.ps1
+.\workshop\scripts\deploy-spoke-foundry.ps1
 ```
 
 **Bash:**
 ```bash
-./scripts/deploy-spoke-foundry.sh
+./workshop/scripts/deploy-spoke-foundry.sh
 ```
 
-This step deploys a sample Citadel Spoke: a standalone Azure AI Foundry account and project that represent an onboarded workload behind the Citadel Hub.
+This step deploys a sample Citadel Spoke: a standalone Azure AI Foundry account and project that represent an onboarded workload (use case).
 
-### 3.9 Verify Deployment
+### 3.8 Verify Deployment
 
-Once the script completes:
+Once the script completes, there is no need to note down any values — the notebooks read directly from `azd env` variables at runtime.
 
-Note down these values — you will need them in Lab 3:
-- **Hub resource group name** (e.g., `rg-citadel-workshop`)
-- **Spoke resource group name** (by default, `<hub-resource-group>-spoke`)
-- **APIM service name** (e.g., `apim-...`)
-- **Azure region** you deployed to
-
-You can also verify in the Azure Portal:
+You can verify in the Azure Portal:
 1. Go to [portal.azure.com](https://portal.azure.com)
 2. Navigate to the hub resource group and confirm the shared Citadel resources are deployed (APIM, Event Hub, Cosmos DB, Key Vault, Logic App, AI Foundry, etc.)
 3. Navigate to the spoke resource group created by the script and confirm the sample Azure AI Foundry resources are deployed there
@@ -300,20 +266,22 @@ Navigate to your resource group in the Azure Portal. You should see resources in
 
 | Resource Type | Name Pattern | Purpose |
 |---------------|-------------|---------|
-| API Management | `apim-*` | Unified AI gateway — the heart of Citadel |
+| API Management | `apim-*` | Unified AI gateway — the heart of Citadel Hub |
 | AI Foundry | `aif-*` | Hosts AI model deployments (GPT-4.1, DeepSeek-R1, etc.) |
 | Application Insights | `appi-apim-*` | APIM performance monitoring and telemetry |
 | Cosmos DB | `cosmos-*` | Usage record storage for analytics |
 | Event Hub | `evhns-*` | Real-time usage data streaming |
 | Key Vault | `kv-*` | Secrets and certificates management |
-| Language Service | `lang-*` | PII detection for prompt/response scanning |
-| Content Safety | `csafety-*` | Content safety scanning |
 | Log Analytics | `log-*` | Centralized log collection |
 | Logic App | `logic-*` | Usage ingestion workflow processing |
 | Virtual Network | `vnet-*` | Network isolation and private endpoints |
 | Managed Identity | `id-*` | Service-to-service authentication (zero credentials) |
 
-### 4.2 Explore API Management
+### 4.2 Explore AI Foundry
+
+> **Note:** After `azd up` deployment, the AI Foundry resources in Citadel Hub have disabled public network access by design. Related Foundry projects are not accessible via the Foundry portal — users will see a **"Private network access required"** message. This is expected. If you would like to explore the deployed models at the end of the lab, go to the **Foundry resource** → **Resource Management** → **Networking**, and change access to **"All networks"**. After that, you can access the related project in the Foundry portal and see deployed models under **Build** → **Models**. We recommend doing this at the very end of the workshop to minimize context switching.
+
+### 4.3 Explore API Management
 
 API Management is the core of Citadel. Explore these areas:
 
@@ -323,49 +291,33 @@ API Management is the core of Citadel. Explore these areas:
    - **Azure OpenAI API** — Standard Azure OpenAI compatible endpoint
    - **Universal LLM API** — Citadel's universal inference endpoint
    - **Unified AI API** — Multi-provider wildcard API (if enabled)
-3. Go to **APIs** → **All APIs** → **Settings**, then review the **Application Insights** and **Azure Monitor** tabs
-4. On the **Azure Monitor** tab, enable **Log LLM messages** for both **Log prompts** and **Log completions** (keep the default size values), then click **Save**
+3. Go to **Universal LLM API** → **Settings**. Scroll down to **Diagnostics Logs** and select **Azure Monitor**. Observe that **"Log LLM messages"** is enabled. This is also the case with other APIs — Azure OpenAI API and Unified AI API.
 
-> **Optional:** Select an API (e.g. Universal LLM API), open the **Test** tab, and search for the "chat" operation ("Gets chat completions for the provided chat messages."). Click **Send** and observe the reply.
+> **Optional:** Select an API (e.g. Universal LLM API), open the **Test** tab, and search for the "chat" operation ("Gets chat completions for the provided chat messages."). In the request body, change the `model` field from `gpt-4o` to `gpt-4.1`. Click **Send** and observe the reply.
 
 #### Products
 1. Go to **Products** — each product represents an "access contract" for a team/application
-2. Note the default products and how they map to subscription keys
 
 > **Note:** Additional products will be created when you run the validation notebooks.
 
 #### Policies
-1. Select an API → Select **All operations** → **Inbound processing** → **Policy code editor**
-2. Review the XML policies — look for:
-   - Backend routing and load balancing
-   - Token rate limiting
-   - Usage logging to Event Hub
-   - Managed identity authentication to backends
-
-#### Named Values
-1. Go to **Named values** — these store configuration like backend endpoints, policy parameters
-2. Look for JWT-related named values if Entra ID auth is configured
+1. Select an API (e.g. Universal LLM API) → Select **All operations** → **Inbound processing** → **Policy code editor**
+2. Review the XML policies — pay attention to `<include-fragment>` policy blocks. Note down the policy block with `fragment-id="set-llm-usage"`. In the next step, go to **APIs** → **Policy Fragments**, select the **set-llm-usage** policy fragment, then go to **Settings** → **Policy editor** to review its policy code.
 
 #### Backends
 1. Go to **Backends** — see registered AI Foundry / OpenAI backends
-2. Note the circuit breaker configuration on each backend
+2. Note the circuit breaker configuration on LLM backends (not all backends have circuit breakers — only the LLM-related ones)
 3. Go to **Load balancer** — see how backends are grouped into pools for load distribution
-
-### 4.3 Explore AI Foundry
-
-1. Navigate to your **AI Foundry** resource in the Azure Portal
-2. Find the **Foundry project** and from its overview page, click the link to open the **Foundry portal** (alternatively, navigate directly to [ai.azure.com](https://ai.azure.com))
-3. In the Foundry portal, go to **Build** → **Models** to see deployed models (GPT-4.1, DeepSeek-R1, text-embedding-3-large, etc.)
-4. Back in the Azure Portal, go to the Foundry account → **Access control (IAM)** → **Role assignments** and look for the APIM managed identity (contains `-apim-` in its name) — it should have the **Cognitive Services OpenAI User** role
 
 ### 4.4 Explore Supporting Services
 
 **Cosmos DB:**
-1. Open **Data Explorer**
-2. Look for the `ai-usage-db` database — the important containers are `ai-usage-container` (stores usage records) and `model-pricing` (stores model pricing data). These will be populated after Lab 3.
+1. First, go to **Settings** → **Networking** and enable **"Selected networks"**. Under the Firewall option, add your current IP address and accept connections from within public Azure datacenters. Note that this is only for the purposes of this lab — in a real implementation, networking should be configured to fit your specific networking setup. Also note that later in the labs, certain steps may fail indicating that an additional IP needs to be added.
+2. Open **Data Explorer**
+3. Look for the `ai-usage-db` database — the important containers are `llm-usage-container` (stores usage records) and `model-pricing` (stores model pricing data). These will be populated in later labs.
 
 **Key Vault:**
-1. Review the Key Vault resource — note that there are no secrets stored immediately after `azd up`
+1. Review the Key Vault resource in the **spoke resource group** — note that there are no secrets stored immediately after `azd up`
 2. As part of the notebooks execution, secrets (such as access contract subscription keys) will be created here
 
 ---
@@ -433,56 +385,48 @@ Take a moment to review how this works in the code: the notebooks use `azd env g
 
 The workshop includes a subset of validation notebooks. Execute them in this order:
 
-#### Notebook 1: LLM Backend Onboarding
+#### Notebook 1: LLM Backend Onboarding Runner
 
-**File:** `llm-backend-onboarding-runner.ipynb`
+**File:** [`1. llm-backend-onboarding-runner.ipynb`](1.%20llm-backend-onboarding-runner.ipynb)
 
-This notebook registers AI backends into the APIM gateway and verifies routing. It will:
-- Extract current backend configuration from APIM
-- Generate and deploy backend pools with load balancing
-- Verify model routing through multiple API formats
-- Test chat completions via SDK and streaming
+Refer to the [LLM Backend Onboarding Runner](../validation/README.md#1-llm-backend-onboarding-runner) section in the validation guide for a detailed description of this notebook.
 
 > **Lab context:** For the purposes of this lab, the same backends that were already provisioned by `azd up` will be re-provisioned through the notebook. In a real-world scenario, you would first provision new backends (e.g. a new AI Foundry account) and then use this notebook to register them with APIM. Note that all backends must be included in a single provisioning run — if only one new backend is added via the notebook, previously registered backends will be removed. For example, if `backend1` and `backend2` are already registered and you want to add `backend3`, all three must be specified in the notebook.
 
-Run all cells sequentially. Pay attention to the test outputs — you should see successful responses from your deployed models.
+#### Notebook 2: Universal LLM API — All-Models Tests
 
-#### Notebook 2: Access Contracts
+**File:** [`2. citadel-universal-llm-api-all-models-tests.ipynb`](2.%20citadel-universal-llm-api-all-models-tests.ipynb)
 
-**File:** `citadel-access-contracts-tests.ipynb`
+Refer to the [Universal LLM API — All-Models Tests](../validation/README.md#2-universal-llm-api--all-models-tests) section in the validation guide for a detailed description of this notebook.
 
-This notebook creates three access contracts (think of them as per-team/per-app access policies):
-- **Sales-Assistant** — Key Vault integration
-- **HR-ChatAgent** — Key Vault + Foundry integration
-- **Support-Bot** — Direct output (no external integrations)
+#### Notebook 3: Citadel Access Contracts Tests
 
-Each contract gets its own APIM product with subscription key, rate limits, and policies. The notebook also runs a load test and visualizes throttling behavior.
+**File:** [`3. citadel-access-contracts-tests.ipynb`](3.%20citadel-access-contracts-tests.ipynb)
 
-#### Notebook 3: Agentic Frameworks (Optional)
+Refer to the [Citadel Access Contracts Tests](../validation/README.md#3-citadel-access-contracts-tests) section in the validation guide for a detailed description of this notebook.
 
-**File:** `citadel-agent-frameworks-tests.ipynb`
+#### Notebook 4: Citadel Agent Frameworks Tests
 
-This notebook tests Citadel access contracts using different agent frameworks to simulate multi-turn conversations. It validates that AI agents can route through the Citadel gateway using various integration patterns.
+**File:** [`4. citadel-agent-frameworks-tests.ipynb`](4.%20citadel-agent-frameworks-tests.ipynb)
 
-#### Notebook 4: Unified AI API (Optional)
+Refer to the [Citadel Agent Frameworks Tests](../validation/README.md#4-citadel-agent-frameworks-tests) section in the validation guide for a detailed description of this notebook.
 
-**File:** `citadel-unified-ai-api-tests.ipynb`
+#### Notebook 5: Citadel PII Processing Tests
 
-Tests multi-provider routing through the Unified AI Wildcard API.
+**File:** [`5. citadel-pii-processing-tests.ipynb`](5.%20citadel-pii-processing-tests.ipynb)
 
-#### Notebook 5: PII Processing (Optional)
+Refer to the [Citadel PII Processing Tests](../validation/README.md#5-citadel-pii-processing-tests) section in the validation guide for a detailed description of this notebook.
 
-**File:** `citadel-pii-processing-tests.ipynb`
+#### Notebook 6: Citadel Unified AI API Tests
 
-Tests PII anonymization and blocking:
-- Sends prompts containing personal data (names, emails, phone numbers, etc.)
-- Verifies the gateway masks PII before forwarding to the LLM
-- Verifies the gateway blocks requests with PII when configured
+**File:** [`6. citadel-unified-ai-api-tests.ipynb`](6.%20citadel-unified-ai-api-tests.ipynb)
+
+Refer to the [Unified AI API Tests](../validation/README.md#6-unified-ai-api) section in the validation guide for a detailed description of this notebook.
 
 ### 5.5 Running Notebooks — Tips
 
-- **Run cells one at a time** — don't "Run All" on the first pass; read the output of each cell
-- **Azure CLI auth** — make sure `az login` is active in your terminal before running notebooks
+- **Run All is fine** — you can use "Run All" to execute the entire notebook, but make sure to review the output of each cell afterwards to understand what happened
+- **Azure CLI auth** — ensure you are logged in with `az login` before running notebooks; this is required for the notebooks to discover resources and authenticate
 - **Cleanup** — do not worry about cleaning up resources created by notebooks individually; at the end of the workshop you will run `azd down --purge --force` which removes everything
 - **Errors?** — Check [Troubleshooting](#8-troubleshooting) section
 
@@ -504,13 +448,11 @@ Tests PII anonymization and blocking:
 
 3. **Metrics**:
    - Go to **Metrics**
-   - Add metric: **Requests** → Split by **ApiId** — observe how traffic distributed across your notebook runs
-   - Reset the chart, then add a new metric: **Backend Duration** to see backend response times
+   - Add metric: **Requests** → Split by **ApiId** — observe how traffic distributed across your notebook runs. Use Bar Chart for visualization.
+   - Create new chart, then add a new metric: **Backend Duration** → Split by **ApiId**, to see backend response times
 
-   > **Tip:** Reset the chart before switching between **Requests** and **Backend Duration** — mixing the two metrics on the same chart produces confusing results.
-
-4. **Logs** (Log Analytics):
-   - Go to **Logs** (Log Analytics)
+4. **Logs**:
+   - Go to **Logs** (under Monitoring)
    - Run sample queries to explore APIM gateway activity:
 
    **Request summary by response code:**
@@ -575,10 +517,11 @@ From your APIM resource, click the **Application Insights** option in the sideba
 
 Once you have a successful run, proceed with importing model pricing data.
 
-**Import model pricing data:** The `model-pricing` container stores per-model cost information used for usage analytics. This data is imported from a local JSON file (`model-pricing.json`) included in the workshop folder. The import script authenticates via Entra ID and requires the **Cosmos DB Built-in Data Contributor** role on your Cosmos DB account.
+**Import model pricing data:** The `model-pricing` container stores per-model cost information used for usage analytics. This data is imported from a local JSON file (`model-pricing.json`) included in the workshop/scripts folder. The import script authenticates via Entra ID and requires the **Cosmos DB Built-in Data Contributor** role on your Cosmos DB account.
 
 1. First, retrieve your Cosmos DB account name and assign the required role to your current user:
 
+   **Bash:**
    ```bash
    # Get the Cosmos DB account name from your deployment
    COSMOS_ACCOUNT=$(az cosmosdb list --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) --query "[0].name" -o tsv)
@@ -594,35 +537,36 @@ Once you have a successful run, proceed with importing model pricing data.
      --scope "/"
    ```
 
-   > **PowerShell:**
-   > ```powershell
-   > $COSMOS_ACCOUNT = az cosmosdb list --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) --query "[0].name" -o tsv
-   > $COSMOS_RESOURCE_GROUP = azd env get-value AZURE_RESOURCE_GROUP
-   > $CURRENT_USER_ID = az ad signed-in-user show --query id -o tsv
-   >
-   > az cosmosdb sql role assignment create `
-   >   --account-name $COSMOS_ACCOUNT `
-   >   --resource-group $COSMOS_RESOURCE_GROUP `
-   >   --role-definition-id 00000000-0000-0000-0000-000000000002 `
-   >   --principal-id $CURRENT_USER_ID `
-   >   --scope "/"
-   > ```
+   **PowerShell:**
+   ```powershell
+   $COSMOS_ACCOUNT = az cosmosdb list --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) --query "[0].name" -o tsv
+   $COSMOS_RESOURCE_GROUP = azd env get-value AZURE_RESOURCE_GROUP
+   $CURRENT_USER_ID = az ad signed-in-user show --query id -o tsv
+   
+   az cosmosdb sql role assignment create `
+      --account-name $COSMOS_ACCOUNT `
+      --resource-group $COSMOS_RESOURCE_GROUP `
+      --role-definition-id 00000000-0000-0000-0000-000000000002 `
+      --principal-id $CURRENT_USER_ID `
+      --scope "/"
+   ```
 
 2. Run the import script to load model pricing data into Cosmos DB:
 
+   **Bash:**
    ```bash
    # Get the Cosmos DB endpoint
    COSMOS_ENDPOINT=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $COSMOS_RESOURCE_GROUP --query "documentEndpoint" -o tsv)
 
    # Import model pricing data
-   uv run python import-model-pricing.py --endpoint $COSMOS_ENDPOINT
+   uv run python scripts\import-model-pricing.py --endpoint $COSMOS_ENDPOINT
    ```
 
-   > **PowerShell:**
-   > ```powershell
-   > $COSMOS_ENDPOINT = az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $COSMOS_RESOURCE_GROUP --query "documentEndpoint" -o tsv
-   > uv run python import-model-pricing.py --endpoint $COSMOS_ENDPOINT
-   > ```
+   **PowerShell:**
+   ```powershell
+   $COSMOS_ENDPOINT = az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $COSMOS_RESOURCE_GROUP --query "documentEndpoint" -o tsv
+   uv run python scripts/import-model-pricing.py --endpoint $COSMOS_ENDPOINT
+   ```
 
    You should see output confirming each model pricing record was upserted.
 
@@ -630,7 +574,7 @@ Once you have a successful run, proceed with importing model pricing data.
 
 1. Navigate to your **Cosmos DB** resource
 2. Open **Data Explorer**
-3. Select `ai-usage-db` database → `ai-usage-container`
+3. Select `ai-usage-db` database → `llm-usage-container`
 4. Run a query to see usage records generated by your notebook calls:
 
    ```sql
@@ -642,12 +586,16 @@ Once you have a successful run, proceed with importing model pricing data.
 5. Examine a usage record — note fields like:
    - Model name and deployment
    - Token counts (prompt, completion, total)
-   - Subscription/product that made the call
-   - Timestamp and response latency
+   - Product that made the call
+   - Timestamp
+
+   > **Tip:** These usage records are generated by the `set-llm-usage` APIM policy fragment you reviewed in Lab 2 (Section 4.3). That policy fragment captures token counts and model metadata from each LLM call and emits them to Event Hub, which the Logic App workflow then ingests into Cosmos DB.
 
 6. Also explore the `model-pricing` container to see how model pricing data is stored
 
 > **Note:** If in step 3 you get a warning that the request is blocked by your Cosmos DB account firewall settings, go to your Cosmos DB resource → **Settings** → **Networking**, choose **Selected networks**, and add your current IP address.
+
+> **Optional:** You can now visualize the data in Cosmos DB using the provided Power BI template. See the [Power BI Dashboard guide](../guides/power-bi-dashboard.md) for instructions.
 
 ---
 
