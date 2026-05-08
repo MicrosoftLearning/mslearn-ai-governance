@@ -31,7 +31,7 @@ param enableAIModelInference bool = true
 
 param enableOpenAIRealtime bool = true
 
-param enableDocumentIntelligence bool = true
+param enableDocumentIntelligence bool = false
 
 param enablePIIAnonymization bool = true
 
@@ -147,7 +147,6 @@ param embeddingsBackendId string = 'foundry-embeddings'
 
 var apimPublicNetworkAccess = apimV2PublicNetworkAccess ? 'Enabled' : 'Disabled'
 
-var openAiApiBackendId = 'openai-backend'
 var openAiApiUamiNamedValue = 'uami-client-id'
 var openAiApiEntraNamedValue = 'entra-auth'
 var openAiApiClientNamedValue = 'client-id'

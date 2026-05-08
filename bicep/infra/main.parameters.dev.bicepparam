@@ -32,7 +32,6 @@ param createAppInsightsDashboards = false
 param enableAPICenter = true
 
 // Enable features for testing
-param enableAIFoundry = true
 param enableAIGatewayPiiRedaction = true
 param enableAIModelInference = true
 

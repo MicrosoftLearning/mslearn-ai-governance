@@ -251,11 +251,16 @@
                 }
 
                 // If path is chat/completions, embeddings, or images/embeddings, use /models/{path}
-                if (lowerPath.Contains("chat/completions") ||
-                    lowerPath.Contains("images/embeddings") ||
-                    lowerPath.Contains("embeddings"))
+                if (lowerPath.Contains("chat/completions"))
                 {
                     return string.Format("models/{0}", path);
+                }
+
+                // If embeddings endpoint, route to /openai/deployments/{model}/embeddings to leverage Azure OpenAI backend for embeddings
+                if (lowerPath.Contains("embeddings"))
+                {
+                    string requestedModel = (string)context.Variables["requestedModel"];
+                    return string.Format("openai/deployments/{0}/{1}", requestedModel, path);
                 }
 
                 // Catch-all: /openai/v1/{path}

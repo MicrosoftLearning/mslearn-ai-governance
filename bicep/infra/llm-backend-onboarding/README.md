@@ -1,4 +1,4 @@
-# 🚀 LLM Backend Contract for AI Citadel Governance Hub
+# 🚀 Citadel Backend Contract
 
 ## Overview
 

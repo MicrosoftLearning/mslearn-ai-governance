@@ -6,12 +6,15 @@ This testing suite provides a comprehensive, end-to-end validation framework for
 
 The recommended execution order is:
 
-1. **Backend Onboarding** — Register AI backends and deploy routing logic into APIM
-2. **Access Contracts** — Create per-team access contracts with Key Vault and Foundry integrations
-3. **Agent Frameworks** — Validate agent-based consumption of provisioned contracts
-4. **PII Processing** — Test PII anonymization, deanonymization, and blocking policies
-5. **JWT Authentication** — Validate JWT-enforced and role-based access control across all API endpoints
+> **Strongly recommended baseline (steps 1–4):** these four notebooks together exercise the core gateway plumbing — backend onboarding, full model surface area, access-contract provisioning, and real-world agent consumption. Run them in order on every new Governance Hub deployment before moving on to the optional scenario-specific notebooks.
+
+1. **Backend Contracts (LLM Onboarding)** — Register AI backends and deploy routing logic into APIM ⭐ *strongly recommended*
+2. **Universal LLM API — All-Models Tests** — Validate every gateway-configured model (chat / embeddings / Responses API) through `/models` ⭐ *strongly recommended*
+3. **Access Contracts** — Create per-team access contracts with Key Vault and Foundry integrations ⭐ *strongly recommended*
+4. **Agent Frameworks** — Validate agent-based consumption of provisioned contracts (Microsoft Agent Framework, Foundry Agent SDK, LangChain) ⭐ *strongly recommended*
+5. **PII Processing** — Test PII anonymization, deanonymization, and blocking policies
 6. **Unified AI API** — Test multi-provider routing patterns through the Unified AI Wildcard API
+7. **JWT Authentication** — Validate JWT-enforced and role-based access control across all API endpoints
 
 Each notebook is self-contained with initialization, deployment, testing, visualization, and cleanup stages, enabling both interactive exploration and repeatable CI/CD validation.
 
@@ -34,10 +37,12 @@ Before running any notebook, ensure the following are in place:
 
 | Capability | Required By | Details |
 |---|---|---|
+| Universal LLM API (`models`) imported in APIM | Universal LLM All-Models Tests | Required for `/models` discovery and per-model operation tests |
 | Azure Key Vault | Access Contracts, Agent Frameworks | A Key Vault with secrets for LLM endpoint and API key |
 | Azure AI Foundry | Access Contracts, Agent Frameworks | A Foundry account and project for connection integration |
 | Azure AI Language Service | PII Processing | PII detection endpoint with managed identity access |
 | Event Hub | PII Processing | For PII state saving and audit logging |
+| Unified AI API (`unified-ai`) imported in APIM | Unified AI API | Required for the wildcard `/unified-ai/**` routing patterns |
 | Entra ID App Registration | JWT Authentication | Client credentials (client ID + secret) with app roles configured |
 | MSAL Library | JWT Authentication | Optional — for interactive device code flow token acquisition |
 | Google Gemini API | Unified AI API | Optional — for testing Gemini routing pattern |
@@ -103,13 +108,73 @@ llm_backends_config = [
 
 ---
 
-### 2. Citadel Access Contracts Tests
+### 2. Universal LLM API — All-Models Tests
+
+| | |
+|---|---|
+| **Notebook** | [`citadel-universal-llm-api-all-models-tests.ipynb`](citadel-universal-llm-api-all-models-tests.ipynb) |
+| **Purpose** | Validate the Universal LLM API (`/models`) against every model exposed by the gateway |
+| **Run this** | Immediately after backend onboarding to confirm the full model catalogue is reachable |
+
+#### What It Does
+
+This notebook provisions a single access contract with **`allowedModels = ""`** (no model restriction), then dynamically discovers the live model catalogue via `GET /models/models` and exercises the appropriate OpenAI v1 operation for each model. It is the fastest way to confirm that every onboarded backend pool is end-to-end reachable through the Universal LLM API surface.
+
+#### Operations Exercised Per Model
+
+| Model name pattern | Operations exercised |
+|---|---|
+| Contains `embedding` | `POST /models/embeddings` |
+| Contains `gpt`       | `POST /models/chat/completions` **and** the full Responses API trio: `POST /models/responses`, `GET /models/responses/{response_id}`, `GET /models/responses/{response_id}/input_items?limit=20` |
+| Anything else        | `POST /models/chat/completions` |
+
+#### Steps
+
+| Step | Description |
+|---|---|
+| 0 | **Initialize variables** — Configure resource group, location, API versions, and optional model cap |
+| 1 | **Verify Azure CLI** — Confirm authentication and subscription context |
+| 2 | **Initialize APIM Client** — Discover the Universal LLM API and supported models |
+| 3 | **Provision access contract** — Deploy a Bicep-generated APIM product + subscription with `allowedModels = ""` and a generous capacity allocation |
+| 4 | **Retrieve API key** — Get the subscription key for the unrestricted product |
+| 5 | **Discover models** — Call `GET /models/models` to enumerate the live model catalogue |
+| 6 | **Per-model operation loop** — Auto-classify each model and run chat / embeddings / Responses API operations |
+| 7 | **Summary table** — Aggregate per-model pass/fail across all exercised operations |
+| Cleanup | **Delete test products** — Optionally remove the unrestricted access contract |
+
+#### Key Configuration
+
+```python
+governance_hub_resource_group = "REPLACE"
+location                      = "REPLACE"
+
+targetInferenceApi    = "models"               # Universal LLM API
+inference_api_version = "2024-05-01-preview"
+openai_api_version    = "2024-12-01-preview"
+
+# 0 = test every discovered model; set a positive int to cap for quick smoke tests
+max_models_to_test = 0
+
+# Delay between POST /responses and the subsequent GET /responses/{id} calls
+responses_get_delay_seconds = 0
+```
+
+#### Output
+
+- One Bicep-deployed APIM product + subscription with no model RBAC restriction
+- Live discovery of every gateway-configured model via `GET /models/models`
+- Per-model results for chat, embeddings, and (where applicable) Responses API operations
+- Summary table highlighting any model that failed an expected operation
+
+---
+
+### 3. Citadel Access Contracts Tests
 
 | | |
 |---|---|
 | **Notebook** | [`citadel-access-contracts-tests.ipynb`](citadel-access-contracts-tests.ipynb) |
 | **Purpose** | Create, deploy, and load-test multiple access contracts with different integration patterns |
-| **Run this** | After backend onboarding is complete |
+| **Run this** | After backend onboarding and the Universal LLM all-models smoke test |
 
 #### What It Does
 
@@ -164,13 +229,13 @@ foundry_project_name = "REPLACE"
 
 ---
 
-### 3. Citadel Agent Frameworks Tests
+### 4. Citadel Agent Frameworks Tests
 
 | | |
 |---|---|
 | **Notebook** | [`citadel-agent-frameworks-tests.ipynb`](citadel-agent-frameworks-tests.ipynb) |
 | **Purpose** | Validate real-world agent consumption of access contracts using three major frameworks |
-| **Run this** | After access contracts are deployed (notebook 2) |
+| **Run this** | After access contracts are deployed (notebook 3) |
 
 #### What It Does
 
@@ -228,7 +293,7 @@ support_model_name = "phi-4"
 
 ---
 
-### 4. Citadel PII Processing Tests
+### 5. Citadel PII Processing Tests
 
 | | |
 |---|---|
@@ -297,7 +362,74 @@ location = "REPLACE"
 
 ---
 
-### 5. Citadel JWT Authentication Tests
+### 6. Citadel Unified AI API Tests
+
+| | |
+|---|---|
+| **Notebook** | [`citadel-unified-ai-api-tests.ipynb`](citadel-unified-ai-api-tests.ipynb) |
+| **Purpose** | Validate the Unified AI Wildcard API across multiple LLM providers and API patterns |
+| **Run this** | After the Governance Hub is deployed with the Unified AI API enabled |
+
+#### What It Does
+
+This notebook validates the Unified AI Wildcard API (`/unified-ai`) that enables API pattern flexibility across multiple LLM providers. It deploys a test access contract, then tests Azure OpenAI, AI Foundry inference, and Gemini routing patterns, validates model discovery endpoints, verifies API key authentication, and runs a load test with throttling visualization.
+
+#### API Patterns Tested
+
+| Pattern | Path | Provider |
+|---|---|---|
+| **Azure OpenAI** | `/unified-ai/openai/deployments/{model}/chat/completions` | Azure OpenAI |
+| **Foundry Inference** | `/unified-ai/models/chat/completions` | AI Foundry |
+| **Gemini OpenAI** | `/unified-ai/v1beta/openai/chat/completions` | Google Gemini (optional) |
+| **Deployment Discovery** | `GET /unified-ai/deployments` | All providers |
+
+#### Steps
+
+| Step | Description |
+|---|---|
+| 0 | **Initialize variables** — Configure resource group, location, and model names per backend |
+| 1 | **Verify Azure CLI** — Confirm authentication and subscription context |
+| 2 | **Initialize APIM Client** — Discover Unified AI API and retrieve supported models |
+| 3 | **Deploy access contract** — Create and deploy a test APIM product with model-scoped policy via Bicep |
+| 4 | **Retrieve API key** — Get the subscription key and build endpoint URLs |
+| Test 1 | **Model discovery** — `GET /unified-ai/deployments` to list available models |
+| Test 2 | **Azure OpenAI pattern** — Chat completion via OpenAI-compatible path; expects 200 |
+| Test 3 | **Foundry inference pattern** — Chat completion via inference path with model in body; expects 200 |
+| Test 4 | **Deployment queries** — Get existing deployment (200) and non-existent deployment (404) |
+| Test 5 | **Gemini pattern** — Chat completion via Gemini OpenAI-compatible path (if configured) |
+| Test 6 | **API key authentication** — Valid key (200), missing key (401) |
+| Test 7 | **Load test** — 30-second burst requests with throttling visualization |
+| Cleanup | **Delete test products** — Optionally remove the access contract product |
+
+#### Key Configuration
+
+```python
+governance_hub_resource_group = "REPLACE"
+location = "REPLACE"
+
+# Model configuration per backend
+openai_model = "gpt-4o"
+foundry_inference_model = "Mistral-Large-3"
+gemini_model = "gemini-2.5-flash-lite"
+
+# Test toggles
+test_gemini = False  # Set True if Gemini backend is configured
+
+# Load test
+test_duration = 30   # Seconds
+```
+
+#### Output
+
+- Deployed test access contract with model-scoped policy
+- Model discovery results from `GET /deployments`
+- Response validation across Azure OpenAI, Foundry, and Gemini patterns
+- API key authentication enforcement
+- Load test visualization (bar chart with 200/429 status codes over time)
+
+---
+
+### 7. Citadel JWT Authentication Tests
 
 | | |
 |---|---|
@@ -372,107 +504,49 @@ requiredRoles = "Models.Read"
 
 ---
 
-### 6. Citadel Unified AI API Tests
-
-| | |
-|---|---|
-| **Notebook** | [`citadel-unified-ai-api-tests.ipynb`](citadel-unified-ai-api-tests.ipynb) |
-| **Purpose** | Validate the Unified AI Wildcard API across multiple LLM providers and API patterns |
-| **Run this** | After the Governance Hub is deployed with the Unified AI API enabled |
-
-#### What It Does
-
-This notebook validates the Unified AI Wildcard API (`/unified-ai`) that enables API pattern flexibility across multiple LLM providers. It deploys a test access contract, then tests Azure OpenAI, AI Foundry inference, and Gemini routing patterns, validates model discovery endpoints, verifies API key authentication, and runs a load test with throttling visualization.
-
-#### API Patterns Tested
-
-| Pattern | Path | Provider |
-|---|---|---|
-| **Azure OpenAI** | `/unified-ai/openai/deployments/{model}/chat/completions` | Azure OpenAI |
-| **Foundry Inference** | `/unified-ai/models/chat/completions` | AI Foundry |
-| **Gemini OpenAI** | `/unified-ai/v1beta/openai/chat/completions` | Google Gemini (optional) |
-| **Deployment Discovery** | `GET /unified-ai/deployments` | All providers |
-
-#### Steps
-
-| Step | Description |
-|---|---|
-| 0 | **Initialize variables** — Configure resource group, location, and model names per backend |
-| 1 | **Verify Azure CLI** — Confirm authentication and subscription context |
-| 2 | **Initialize APIM Client** — Discover Unified AI API and retrieve supported models |
-| 3 | **Deploy access contract** — Create and deploy a test APIM product with model-scoped policy via Bicep |
-| 4 | **Retrieve API key** — Get the subscription key and build endpoint URLs |
-| Test 1 | **Model discovery** — `GET /unified-ai/deployments` to list available models |
-| Test 2 | **Azure OpenAI pattern** — Chat completion via OpenAI-compatible path; expects 200 |
-| Test 3 | **Foundry inference pattern** — Chat completion via inference path with model in body; expects 200 |
-| Test 4 | **Deployment queries** — Get existing deployment (200) and non-existent deployment (404) |
-| Test 5 | **Gemini pattern** — Chat completion via Gemini OpenAI-compatible path (if configured) |
-| Test 6 | **API key authentication** — Valid key (200), missing key (401) |
-| Test 7 | **Load test** — 30-second burst requests with throttling visualization |
-| Cleanup | **Delete test products** — Optionally remove the access contract product |
-
-#### Key Configuration
-
-```python
-governance_hub_resource_group = "REPLACE"
-location = "REPLACE"
-
-# Model configuration per backend
-openai_model = "gpt-4o"
-foundry_inference_model = "Mistral-Large-3"
-gemini_model = "gemini-2.5-flash-lite"
-
-# Test toggles
-test_gemini = False  # Set True if Gemini backend is configured
-
-# Load test
-test_duration = 30   # Seconds
-```
-
-#### Output
-
-- Deployed test access contract with model-scoped policy
-- Model discovery results from `GET /deployments`
-- Response validation across Azure OpenAI, Foundry, and Gemini patterns
-- API key authentication enforcement
-- Load test visualization (bar chart with 200/429 status codes over time)
-
----
-
 ## Recommended Execution Order
 
+> **Strongly recommended baseline:** run notebooks **1 → 4** in order on every new Citadel Governance Hub deployment. Steps **5 → 7** are optional, scenario-specific validations that can be run independently afterwards.
+
 ```
-┌─────────────────────────────────────┐
-│  1. llm-backend-onboarding-runner   │  ← Onboard LLM backends & routing
-└──────────────┬──────────────────────┘
+┌──────────────────────────────────────────────┐
+│  1. llm-backend-onboarding-runner            │  ⭐ Onboard LLM backends & routing
+└──────────────┬───────────────────────────────┘
                │
                ▼
-┌─────────────────────────────────────┐
-│  2. citadel-access-contracts-tests  │  ← Create access contracts & load test
-└──────────────┬──────────────────────┘
+┌──────────────────────────────────────────────┐
+│  2. citadel-universal-llm-api-all-models-    │  ⭐ Smoke-test EVERY onboarded model
+│     tests                                    │     (chat / embeddings / Responses API)
+└──────────────┬───────────────────────────────┘
                │
                ▼
-┌─────────────────────────────────────┐
-│  3. citadel-agent-frameworks-tests  │  ← Test agent frameworks (uses contracts from step 2)
-└──────────────┬──────────────────────┘
+┌──────────────────────────────────────────────┐
+│  3. citadel-access-contracts-tests           │  ⭐ Create access contracts & load test
+└──────────────┬───────────────────────────────┘
                │
                ▼
-┌─────────────────────────────────────┐
-│  4. citadel-pii-processing-tests    │  ← Test PII masking & blocking (independent contracts)
-└──────────────┬──────────────────────┘
+┌──────────────────────────────────────────────┐
+│  4. citadel-agent-frameworks-tests           │  ⭐ Test agent frameworks
+│                                              │     (uses contracts from step 3)
+└──────────────┬───────────────────────────────┘
+               │   ── End of strongly recommended baseline ──
+               ▼
+┌──────────────────────────────────────────────┐
+│  5. citadel-pii-processing-tests             │  Optional: PII masking & blocking
+└──────────────┬───────────────────────────────┘
                │
                ▼
-┌─────────────────────────────────────┐
-│  5. citadel-jwt-authentication-tests│  ← Test JWT auth & RBAC (independent contracts)
-└──────────────┬──────────────────────┘
+┌──────────────────────────────────────────────┐
+│  6. citadel-unified-ai-api-tests             │  Optional: Unified AI wildcard API
+└──────────────┬───────────────────────────────┘
                │
                ▼
-┌─────────────────────────────────────┐
-│  6. citadel-unified-ai-api-tests    │  ← Test Unified AI API patterns (independent contracts)
-└─────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  7. citadel-jwt-authentication-tests         │  Optional: JWT auth & RBAC
+└──────────────────────────────────────────────┘
 ```
 
-> **Note:** Notebooks 4–6 create their own access contracts and can be run independently after backend onboarding. However, notebook 4 requires PII policy fragments (`pii-anonymization`, `pii-deanonymization`, `pii-state-saving`), and notebook 5 requires JWT configuration and an Entra ID app registration.
+> **Note:** Notebooks 5–7 create their own access contracts and can be run independently after backend onboarding. However, notebook 5 requires PII policy fragments (`pii-anonymization`, `pii-deanonymization`, `pii-state-saving`), notebook 6 requires the Unified AI API (`unified-ai`) to be imported into APIM, and notebook 7 requires JWT configuration plus an Entra ID app registration.
 
 ## Shared Utilities
 

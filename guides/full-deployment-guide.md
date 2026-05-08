@@ -220,7 +220,6 @@ param useExistingVnet = false
 param useExistingLogAnalytics = false
 
 // Features
-param enableAIFoundry = true
 param enableAPICenter = true
 ```
 
@@ -467,7 +466,14 @@ Detailed guide: [Bring Your Own Network](./network-approach.md)
 
 #### Microsoft Foundry Configuration
 
-AI Citadel can deploy **Microsoft Foundry instances** with model deployments as part of the primary landing zone provisioning.
+AI Citadel always deploys at least **one Microsoft Foundry resource** — the **primary** Foundry (the first entry in `aiFoundryInstances`). This primary Foundry is mandatory because the AI Citadel Gateway re-uses its **AI Services unified endpoint** (`https://<foundry>.cognitiveservices.azure.com/`) to power:
+
+- **Content Safety** policies (`llm-content-safety` / `content-safety-backend` in APIM)
+- **PII detection / anonymization** policies (`piiServiceUrl` named value in APIM)
+
+Additional entries can be added to deploy **extra Foundry resources in different regions** for added LLM capacity, geo-redundancy, or access to region-restricted models. The primary Foundry can also host LLM deployments alongside the additional ones — there is no separation between "core capability" and "LLM" Foundry roles.
+
+> **Note:** The previous standalone Azure Language Service and Azure AI Content Safety resources are no longer provisioned. Their capabilities are consumed directly from the primary Foundry account (AI Services kind), removing two private endpoints and simplifying RBAC and DNS configuration.
 
 Input parameters are separated into two parts:
 
@@ -887,8 +893,6 @@ param apimV2PublicNetworkAccess = false
 // Service Network Access
 param cosmosDbPublicAccess = 'Disabled'
 param eventHubNetworkAccess = 'Disabled'  // Enable during deployment, disable after for APIM Standardv2 and PremiumV2 SKUs
-param languageServiceExternalNetworkAccess = 'Disabled'
-param aiContentSafetyExternalNetworkAccess = 'Disabled'
 
 ...
 

@@ -60,6 +60,14 @@
         <!-- Step 4: Frontend authentication (API Key + optional JWT) [Unified AI specific] -->
         <include-fragment fragment-id="security-handler" />
 
+        <!-- Step 4.1: Responses API ownership enforcement [SHARED with Azure OpenAI / Universal LLM]
+             For /responses* operations: validates that response_id (URL or previous_response_id)
+             belongs to the calling subscription, returns 403 on mismatch / 404 on cache miss,
+             and hydrates `requestedModel` from cache for GET/DELETE so model-based routing still works
+             alongside any apiTypeOverrideBackend setting. Reuses `response-id` and `parsed-request-body`
+             that frag-request-processor already extracts. -->
+        <include-fragment fragment-id="responses-id-security" />
+
         <!-- Step 5: Model access control per product [SHARED with Azure OpenAI / Universal LLM] -->
         <include-fragment fragment-id="validate-model-access" />
 
@@ -171,6 +179,8 @@
     </backend>
     <outbound>
         <base />
+        <!-- Cache response_id → owner mapping for successful POST /responses [SHARED]. -->
+        <include-fragment fragment-id="responses-id-cache-store" />
         <include-fragment fragment-id="set-response-headers" />
     </outbound>
     <on-error>

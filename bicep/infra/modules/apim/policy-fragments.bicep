@@ -142,6 +142,16 @@ resource setResponseHeadersFragment 'Microsoft.ApiManagement/service/policyFragm
   }
 }
 
+resource stripBackendHeadersFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  parent: apimService
+  name: 'strip-backend-headers'
+  properties: {
+    description: 'Removes browser, App Service / ARR, and X-Forwarded-* headers from requests forwarded to AI backends'
+    value: loadTextContent('./policies/frag-strip-backend-headers.xml')
+    format: 'rawxml'
+  }
+}
+
 // ------------------
 //    OUTPUTS
 // ------------------

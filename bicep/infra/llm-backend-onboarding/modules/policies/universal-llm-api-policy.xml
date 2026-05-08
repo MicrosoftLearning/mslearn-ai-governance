@@ -21,7 +21,13 @@
         
         <!-- Step 1: Extract and validate model parameter from request -->
         <include-fragment fragment-id="set-llm-requested-model" />
-        
+
+        <!-- Step 1.1: Responses API ownership enforcement (cross-API shared fragment).
+             For /responses* operations: validates that response_id (URL or previous_response_id)
+             belongs to the calling subscription, returns 403 on mismatch / 404 on cache miss,
+             and hydrates `requestedModel` from cache so backend routing works for GET/DELETE. -->
+        <include-fragment fragment-id="responses-id-security" />
+
         <!-- Remove api-key header to prevent it from being passed to backend endpoints -->
         <set-header name="api-key" exists-action="delete" />
         
@@ -60,6 +66,8 @@
     </backend>
     <outbound>
         <base />
+        <!-- Cache response_id → owner mapping for successful POST /responses (cross-API shared fragment). -->
+        <include-fragment fragment-id="responses-id-cache-store" />
     </outbound>
     <on-error>
         <base />

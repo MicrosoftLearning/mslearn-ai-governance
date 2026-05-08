@@ -57,8 +57,6 @@ param apimSkuUnits = int(readEnvironmentVariable('APIM_SKU_UNITS', '1'))
 param eventHubCapacityUnits = int(readEnvironmentVariable('EVENTHUB_CAPACITY', '1'))
 param cosmosDbRUs = int(readEnvironmentVariable('COSMOS_DB_RUS', '400'))
 param logicAppsSkuCapacityUnits = int(readEnvironmentVariable('LOGIC_APPS_SKU_CAPACITY_UNITS', '1'))
-param languageServiceSkuName = readEnvironmentVariable('LANGUAGE_SERVICE_SKU_NAME', 'S')
-param aiContentSafetySkuName = readEnvironmentVariable('AI_CONTENT_SAFETY_SKU_NAME', 'S0')
 param apicSku = readEnvironmentVariable('APIC_SKU', 'Free')
 param keyVaultSkuName = readEnvironmentVariable('KEY_VAULT_SKU_NAME', 'standard')
 ```

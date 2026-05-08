@@ -113,8 +113,8 @@ AI Gateway security & compliance enforcements components:
 | Component | Purpose |Enterprise Features |
 |---------|---------|---------------------|
 | **🔐 Managed Identity** | Zero-credential auth | Secure service-to-service communication |
-| **🛡️ Content Safety** | LLM protection | Prompt Shield and Content Safety protections |
-| **💳 Language Service** | PII detection | Natural language and RegEx based PII entity detection with anonymization support |
+| **🛡️ Content Safety** | LLM protection | Prompt Shield and Content Safety protections (served from the **primary Microsoft Foundry / AI Services** account) |
+| **💳 Language Service** | PII detection | Natural language and RegEx based PII entity detection with anonymization support (served from the **primary Microsoft Foundry / AI Services** account) |
 | **🔍 Microsoft Foundry** | Control Plane | Control plane, responsible AI, registration of external agents  |
 
 Supported by subscription wide security services:

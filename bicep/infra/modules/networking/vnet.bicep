@@ -15,6 +15,18 @@ param functionAppSubnetAddressPrefix string
 param isAPIMV2SKU bool
 param tags object = {}
 
+@description('Enable provisioning of the AI Foundry agent network injection subnet (delegated to Microsoft.App/environments).')
+param enableAgentSubnet bool = true
+
+@description('Name of the AI Foundry agent (network injection) subnet.')
+param agentSubnetName string = 'snet-agents'
+
+@description('NSG name for the AI Foundry agent (network injection) subnet.')
+param agentSubnetNsgName string = 'nsg-agents'
+
+@description('Address prefix for the AI Foundry agent (network injection) subnet. Must not overlap other subnets.')
+param agentSubnetAddressPrefix string = '10.170.0.192/26'
+
 // Set to true to enable service endpoints for APIM subnet
 param enableServiceEndpointsForAPIM bool = true
 
@@ -150,6 +162,15 @@ resource functionAppNsg 'Microsoft.Network/networkSecurityGroups@2020-07-01' = {
   }
 }
 
+resource agentNsg 'Microsoft.Network/networkSecurityGroups@2020-07-01' = if (enableAgentSubnet) {
+  name: agentSubnetNsgName
+  location: location
+  tags: union(tags, { 'azd-service-name': agentSubnetNsgName })
+  properties: {
+    securityRules: []
+  }
+}
+
 resource apimRouteTable 'Microsoft.Network/routeTables@2023-11-01' = {
   name: apimRouteTableName
   location: location
@@ -178,7 +199,7 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2019-11-01' = {
         vnetAddressPrefix
       ]
     }
-    subnets: [
+    subnets: concat([
       {
         name: apimSubnetName
         properties: {
@@ -208,6 +229,9 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2019-11-01' = {
             {
               service: 'Microsoft.Storage'
             }
+            {
+              service: 'Microsoft.CognitiveServices'
+            }
           ] : []
           privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
@@ -230,6 +254,11 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2019-11-01' = {
           }
           privateEndpointNetworkPolicies: 'Disabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
+          serviceEndpoints: [
+            {
+              service: 'Microsoft.CognitiveServices'
+            }
+          ]
         }
       }
       {
@@ -241,6 +270,11 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2019-11-01' = {
           }
           privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
+          serviceEndpoints: [
+            {
+              service: 'Microsoft.CognitiveServices'
+            }
+          ]
           delegations: [
             {
               name: 'Microsoft.Web/serverFarms'
@@ -251,7 +285,27 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2019-11-01' = {
           ]
         }
       }
-    ]
+    ], enableAgentSubnet ? [
+      {
+        name: agentSubnetName
+        properties: {
+          addressPrefix: agentSubnetAddressPrefix
+          networkSecurityGroup: {
+            id: agentNsg.id
+          }
+          privateEndpointNetworkPolicies: 'Enabled'
+          privateLinkServiceNetworkPolicies: 'Enabled'
+          delegations: [
+            {
+              name: 'Microsoft.app/environments'
+              properties: {
+                serviceName: 'Microsoft.App/environments'
+              }
+            }
+          ]
+        }
+      }
+    ] : [])
   }
   
 
@@ -265,6 +319,10 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2019-11-01' = {
 
   resource functionAppSubnet 'subnets' existing = {
     name: functionAppSubnetName
+  }
+
+  resource agentSubnet 'subnets' existing = if (enableAgentSubnet) {
+    name: agentSubnetName
   }
 }
 
@@ -288,5 +346,7 @@ output privateEndpointSubnetName string = virtualNetwork::privateEndpointSubnet.
 output privateEndpointSubnetId string = virtualNetwork::privateEndpointSubnet.id
 output functionAppSubnetName string = virtualNetwork::functionAppSubnet.name
 output functionAppSubnetId string = virtualNetwork::functionAppSubnet.id
+output agentSubnetName string = enableAgentSubnet ? virtualNetwork::agentSubnet.name : ''
+output agentSubnetId string = enableAgentSubnet ? virtualNetwork::agentSubnet.id : ''
 output location string = virtualNetwork.location
 output vnetRG string = resourceGroup().name

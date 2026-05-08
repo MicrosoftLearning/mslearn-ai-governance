@@ -298,13 +298,21 @@ def run(command, ok_message = '', error_message = '', print_output = False, prin
     start_time = time.time()
 
     try:
-        completed_process = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        output_text = completed_process.stdout
-        stderr_text = completed_process.stderr
+        completed_process = subprocess.run(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        output_text = completed_process.stdout or ""
+        stderr_text = completed_process.stderr or ""
         success = completed_process.returncode == 0
     except subprocess.CalledProcessError as e:
-        output_text = e.output.decode("utf-8")
-        stderr_text = e.stderr.decode("utf-8") if e.stderr else ""
+        output_text = e.output.decode("utf-8", errors="replace") if isinstance(e.output, (bytes, bytearray)) else (e.output or "")
+        stderr_text = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, (bytes, bytearray)) else (e.stderr or "")
         success = False
 
     # Combine stdout and stderr for error reporting, but keep stdout clean for JSON parsing
