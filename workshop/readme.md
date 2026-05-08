@@ -608,9 +608,13 @@ After the workshop, remove all deployed resources to avoid ongoing costs:
 azd down --purge --force
 ```
 
-> **Important:** The `--purge` flag ensures soft-deleted resources (Key Vault, Cognitive Services) are permanently removed so you are not charged for them. The `--force` flag skips confirmation prompts.
+> **If `azd down` fails:** Go to the Azure Portal, navigate to your hub resource group, and delete the deployment manually.
 
-Verify in the Azure Portal that your resource group has been deleted.
+> **Important:** The `--purge` flag ensures soft-deleted resources (Key Vault, Cognitive Services) are permanently removed. The `--force` flag skips confirmation prompts.
+
+> **Note:** `azd down` only removes the hub resources that were deployed via `azd up`. You must also manually delete the **spoke resource group** in the Azure Portal, since it was deployed separately via the script.
+
+Verify in the Azure Portal that both resource groups (hub and spoke) have been deleted.
 
 ---
 
