@@ -216,6 +216,18 @@ Then the deployment begins. **This takes approximately 30-45 minutes.**
 
 > **Transient errors:** Deployment of some resources (such as model deployments) may occasionally fail with a transient error. If `azd up` fails, simply re-run the command — it will pick up where it left off.
 
+If your deployment uses the **Developer** APIM SKU (APIM_SKU="Developer"), run the APIM cleanup script immediately after `azd up` completes. The script checks the live APIM SKU and only removes the default APIM products and subscriptions when the SKU is `Developer`.
+
+**PowerShell:**
+```powershell
+.\workshop\scripts\cleanup-apim-defaults.ps1
+```
+
+**Bash:**
+```bash
+./workshop/scripts/cleanup-apim-defaults.sh
+```
+
 ### 3.6 Verify Deployment
 
 Once `azd up` completes:
