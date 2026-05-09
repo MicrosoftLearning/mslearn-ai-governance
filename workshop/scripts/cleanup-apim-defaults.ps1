@@ -145,7 +145,7 @@ $subscriptionListUri = "/subscriptions/$script:SubscriptionId/resourceGroups/$sc
 $defaultSubscriptions = (& az rest `
     --method get `
     --uri $subscriptionListUri `
-    --query "value[?contains(properties.scope, '/products/starter') || contains(properties.scope, '/products/unlimited') || properties.scope == '/apis'].name" `
+    --query "value[?contains(properties.scope, '/products/starter') || contains(properties.scope, '/products/unlimited') || properties.scope == '/apis' || name == 'master'].name" `
     -o tsv 2>$null)
 
 if ($LASTEXITCODE -ne 0) {

@@ -112,7 +112,7 @@ default_subscriptions="$(
   az rest \
     --method get \
     --uri "/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.ApiManagement/service/${apim_name}/subscriptions?api-version=${APIM_API_VERSION}" \
-    --query "value[?contains(properties.scope, '/products/starter') || contains(properties.scope, '/products/unlimited') || properties.scope == '/apis'].name" \
+    --query "value[?contains(properties.scope, '/products/starter') || contains(properties.scope, '/products/unlimited') || properties.scope == '/apis' || name == 'master'].name" \
     -o tsv
   2>/dev/null || true
 )"
