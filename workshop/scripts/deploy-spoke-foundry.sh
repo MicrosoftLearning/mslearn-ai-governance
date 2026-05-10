@@ -3,6 +3,7 @@ set -euo pipefail
 
 AI_PROJECT_MANAGER_ROLE_ID="eadc314b-1a2d-4efa-be10-5d325db5065e"
 KEY_VAULT_SECRETS_USER_ROLE_ID="4633458b-17de-408a-b874-0445c86b69e6"
+FOUNDRY_APPINSIGHTS_CONNECTION_API_VERSION="2025-06-01"
 
 log() {
   printf '\n==> %s\n' "$1"
@@ -115,10 +116,15 @@ compact_seed="$(compact_name_part "${azd_env_name:-$governance_rg}")"
 subscription_suffix="$(printf '%s' "$subscription_id" | tr -d '-' | cut -c1-8)"
 
 default_foundry_name="$(printf 'aif-%s-%s' "$name_seed" "$subscription_suffix" | cut -c1-64 | trim_trailing_hyphen)"
+default_log_analytics_name="$(printf 'law-%s-%s' "$name_seed" "$subscription_suffix" | cut -c1-63 | trim_trailing_hyphen)"
+default_app_insights_name="$(printf 'appi-%s-%s' "$name_seed" "$subscription_suffix" | cut -c1-255 | trim_trailing_hyphen)"
 default_key_vault_name="$(printf 'kv%s%s' "$compact_seed" "$subscription_suffix" | cut -c1-24)"
 
 foundry_account_name="${FOUNDRY_ACCOUNT_NAME:-$default_foundry_name}"
 foundry_project_name="${FOUNDRY_PROJECT_NAME:-citadel-agents-project}"
+log_analytics_workspace_name="${SPOKE_LOG_ANALYTICS_NAME:-$default_log_analytics_name}"
+app_insights_name="${SPOKE_APP_INSIGHTS_NAME:-$default_app_insights_name}"
+foundry_appinsights_connection_name="${SPOKE_AI_FOUNDRY_APPINSIGHTS_CONNECTION_NAME:-appinsights-connection}"
 key_vault_name="${KEY_VAULT_NAME:-$default_key_vault_name}"
 key_vault_enable_purge_protection="${KEY_VAULT_ENABLE_PURGE_PROTECTION:-false}"
 current_user_object_id="$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)"
@@ -184,6 +190,90 @@ else
   printf 'Foundry project already exists: %s\n' "$foundry_project_name"
 fi
 
+log "Ensuring Application Insights CLI extension"
+az extension add --name application-insights --upgrade --only-show-errors >/dev/null
+
+log "Creating Log Analytics workspace"
+if ! az monitor log-analytics workspace show \
+  --resource-group "$spoke_resource_group_name" \
+  --workspace-name "$log_analytics_workspace_name" >/dev/null 2>&1; then
+  az monitor log-analytics workspace create \
+    --resource-group "$spoke_resource_group_name" \
+    --workspace-name "$log_analytics_workspace_name" \
+    --location "$location" \
+    --sku PerGB2018 \
+    --tags "azd-env-name=${azd_env_name:-unknown}" "workload=citadel-spoke" \
+    -o none
+else
+  printf 'Log Analytics workspace already exists: %s\n' "$log_analytics_workspace_name"
+fi
+
+log_analytics_workspace_id="$(az monitor log-analytics workspace show \
+  --resource-group "$spoke_resource_group_name" \
+  --workspace-name "$log_analytics_workspace_name" \
+  --query id \
+  -o tsv)"
+
+log "Creating Application Insights"
+if ! az monitor app-insights component show \
+  --app "$app_insights_name" \
+  --resource-group "$spoke_resource_group_name" >/dev/null 2>&1; then
+  az monitor app-insights component create \
+    --app "$app_insights_name" \
+    --location "$location" \
+    --resource-group "$spoke_resource_group_name" \
+    --workspace "$log_analytics_workspace_id" \
+    --kind web \
+    --application-type web \
+    --tags "azd-env-name=${azd_env_name:-unknown}" "workload=citadel-spoke" \
+    -o none
+else
+  printf 'Application Insights already exists: %s\n' "$app_insights_name"
+fi
+
+app_insights_id="$(az monitor app-insights component show \
+  --app "$app_insights_name" \
+  --resource-group "$spoke_resource_group_name" \
+  --query id \
+  -o tsv)"
+
+app_insights_connection_string="$(az monitor app-insights component show \
+  --app "$app_insights_name" \
+  --resource-group "$spoke_resource_group_name" \
+  --query connectionString \
+  -o tsv)"
+
+project_resource_id="/subscriptions/${subscription_id}/resourceGroups/${spoke_resource_group_name}/providers/Microsoft.CognitiveServices/accounts/${foundry_account_name}/projects/${foundry_project_name}"
+
+connection_body_file="$(mktemp)"
+trap 'rm -f "$connection_body_file"' EXIT
+cat >"$connection_body_file" <<EOF
+{
+  "properties": {
+    "category": "AppInsights",
+    "target": "${app_insights_id}",
+    "authType": "ApiKey",
+    "credentials": {
+      "key": "${app_insights_connection_string}"
+    },
+    "metadata": {
+      "ApiType": "Azure",
+      "ResourceId": "${app_insights_id}"
+    },
+    "isSharedToAll": true
+  }
+}
+EOF
+
+log "Connecting Application Insights to Azure AI Foundry project"
+# The cognitiveservices project connection wrapper currently rejects a valid
+# App Insights payload, so use the ARM resource endpoint directly.
+az rest \
+  --method PUT \
+  --url "https://management.azure.com${project_resource_id}/connections/${foundry_appinsights_connection_name}?api-version=${FOUNDRY_APPINSIGHTS_CONNECTION_API_VERSION}" \
+  --body "@${connection_body_file}" \
+  -o none
+
 log "Creating Key Vault"
 if ! az keyvault show --name "$key_vault_name" --resource-group "$spoke_resource_group_name" >/dev/null 2>&1; then
   key_vault_create_args=(
@@ -232,6 +322,10 @@ log "Saving spoke resource values to azd environment"
 azd env set SPOKE_RESOURCE_GROUP "$spoke_resource_group_name" >/dev/null
 azd env set SPOKE_AI_FOUNDRY_ACCOUNT_NAME "$foundry_account_name" >/dev/null
 azd env set SPOKE_AI_FOUNDRY_PROJECT_NAME "$foundry_project_name" >/dev/null
+azd env set SPOKE_LOG_ANALYTICS_NAME "$log_analytics_workspace_name" >/dev/null
+azd env set SPOKE_APP_INSIGHTS_NAME "$app_insights_name" >/dev/null
+azd env set SPOKE_APP_INSIGHTS_ID "$app_insights_id" >/dev/null
+azd env set SPOKE_AI_FOUNDRY_APPINSIGHTS_CONNECTION_NAME "$foundry_appinsights_connection_name" >/dev/null
 azd env set SPOKE_KEY_VAULT_NAME "$key_vault_name" >/dev/null
 
 cat <<EOF
@@ -240,6 +334,9 @@ Spoke resources are ready.
 Resource group: $spoke_resource_group_name
 Foundry account: $foundry_account_name
 Foundry project: $foundry_project_name
+Log Analytics workspace: $log_analytics_workspace_name
+Application Insights: $app_insights_name
+Foundry App Insights connection: $foundry_appinsights_connection_name
 Key Vault: $key_vault_name
 
 After deleting these resources, purge soft-deleted names with:

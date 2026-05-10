@@ -15,6 +15,7 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
 
 $aiProjectManagerRoleId = 'eadc314b-1a2d-4efa-be10-5d325db5065e'
 $keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+$foundryAppInsightsConnectionApiVersion = '2025-06-01'
 
 function Write-Step {
     param([string]$Message)
@@ -157,6 +158,14 @@ if ([string]::IsNullOrWhiteSpace($KeyVaultName)) {
     if ($KeyVaultName.Length -gt 24) { $KeyVaultName = $KeyVaultName.Substring(0, 24) }
 }
 
+$logAnalyticsWorkspaceName = if ($env:SPOKE_LOG_ANALYTICS_NAME) { $env:SPOKE_LOG_ANALYTICS_NAME } else { "law-$nameSeed-$subscriptionSuffix" }
+if ($logAnalyticsWorkspaceName.Length -gt 63) { $logAnalyticsWorkspaceName = $logAnalyticsWorkspaceName.Substring(0, 63).TrimEnd('-') }
+
+$appInsightsName = if ($env:SPOKE_APP_INSIGHTS_NAME) { $env:SPOKE_APP_INSIGHTS_NAME } else { "appi-$nameSeed-$subscriptionSuffix" }
+if ($appInsightsName.Length -gt 255) { $appInsightsName = $appInsightsName.Substring(0, 255).TrimEnd('-') }
+
+$foundryAppInsightsConnectionName = if ($env:SPOKE_AI_FOUNDRY_APPINSIGHTS_CONNECTION_NAME) { $env:SPOKE_AI_FOUNDRY_APPINSIGHTS_CONNECTION_NAME } else { 'appinsights-connection' }
+
 $currentUserObjectId = (& az ad signed-in-user show --query id -o tsv 2>$null)
 if ([string]::IsNullOrWhiteSpace($currentUserObjectId)) {
     throw 'Could not resolve the signed-in user object ID. This script expects an interactive user login.'
@@ -242,6 +251,92 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Foundry project already exists: $FoundryProjectName"
 }
 
+Write-Step 'Ensuring Application Insights CLI extension'
+& az extension add --name application-insights --upgrade --only-show-errors *> $null
+
+Write-Step 'Creating Log Analytics workspace'
+& az monitor log-analytics workspace show --resource-group $SpokeResourceGroupName --workspace-name $logAnalyticsWorkspaceName *> $null
+if ($LASTEXITCODE -ne 0) {
+    & az monitor log-analytics workspace create `
+        --resource-group $SpokeResourceGroupName `
+        --workspace-name $logAnalyticsWorkspaceName `
+        --location $location `
+        --sku PerGB2018 `
+        --tags "azd-env-name=$tagEnvName" 'workload=citadel-spoke' `
+        -o none
+} else {
+    Write-Host "Log Analytics workspace already exists: $logAnalyticsWorkspaceName"
+}
+
+$logAnalyticsWorkspaceId = ConvertTo-TrimmedCliOutput (& az monitor log-analytics workspace show `
+    --resource-group $SpokeResourceGroupName `
+    --workspace-name $logAnalyticsWorkspaceName `
+    --query id `
+    -o tsv)
+
+Write-Step 'Creating Application Insights'
+& az monitor app-insights component show --app $appInsightsName --resource-group $SpokeResourceGroupName *> $null
+if ($LASTEXITCODE -ne 0) {
+    & az monitor app-insights component create `
+        --app $appInsightsName `
+        --location $location `
+        --resource-group $SpokeResourceGroupName `
+        --workspace $logAnalyticsWorkspaceId `
+        --kind web `
+        --application-type web `
+        --tags "azd-env-name=$tagEnvName" 'workload=citadel-spoke' `
+        -o none
+} else {
+    Write-Host "Application Insights already exists: $appInsightsName"
+}
+
+$appInsightsId = ConvertTo-TrimmedCliOutput (& az monitor app-insights component show `
+    --app $appInsightsName `
+    --resource-group $SpokeResourceGroupName `
+    --query id `
+    -o tsv)
+
+$appInsightsConnectionString = ConvertTo-TrimmedCliOutput (& az monitor app-insights component show `
+    --app $appInsightsName `
+    --resource-group $SpokeResourceGroupName `
+    --query connectionString `
+    -o tsv)
+
+$projectResourceId = "/subscriptions/$subscriptionId/resourceGroups/$SpokeResourceGroupName/providers/Microsoft.CognitiveServices/accounts/$FoundryAccountName/projects/$FoundryProjectName"
+
+$foundryConnectionBody = @{
+    properties = @{
+        category = 'AppInsights'
+        target = $appInsightsId
+        authType = 'ApiKey'
+        credentials = @{
+            key = $appInsightsConnectionString
+        }
+        metadata = @{
+            ApiType = 'Azure'
+            ResourceId = $appInsightsId
+        }
+        isSharedToAll = $true
+    }
+} | ConvertTo-Json -Depth 6 -Compress
+
+$foundryConnectionBodyPath = Join-Path ([System.IO.Path]::GetTempPath()) ("foundry-project-connection-{0}.json" -f [System.Guid]::NewGuid().ToString('N'))
+Set-Content -Path $foundryConnectionBodyPath -Value $foundryConnectionBody -Encoding utf8NoBOM
+
+Write-Step 'Connecting Application Insights to Azure AI Foundry project'
+# The cognitiveservices project connection wrapper currently rejects a valid
+# App Insights payload, so use the ARM resource endpoint directly.
+try {
+    & az rest `
+        --method PUT `
+    --url "https://management.azure.com$projectResourceId/connections/${foundryAppInsightsConnectionName}?api-version=$foundryAppInsightsConnectionApiVersion" `
+        --body "@$foundryConnectionBodyPath" `
+        -o none
+}
+finally {
+    Remove-Item -Path $foundryConnectionBodyPath -Force -ErrorAction SilentlyContinue
+}
+
 Write-Step 'Creating Key Vault'
 & az keyvault show --name $KeyVaultName --resource-group $SpokeResourceGroupName *> $null
 if ($LASTEXITCODE -ne 0) {
@@ -290,12 +385,19 @@ Write-Step 'Saving spoke resource values to azd environment'
 & azd env set SPOKE_RESOURCE_GROUP $SpokeResourceGroupName *> $null
 & azd env set SPOKE_AI_FOUNDRY_ACCOUNT_NAME $FoundryAccountName *> $null
 & azd env set SPOKE_AI_FOUNDRY_PROJECT_NAME $FoundryProjectName *> $null
+& azd env set SPOKE_LOG_ANALYTICS_NAME $logAnalyticsWorkspaceName *> $null
+& azd env set SPOKE_APP_INSIGHTS_NAME $appInsightsName *> $null
+& azd env set SPOKE_APP_INSIGHTS_ID $appInsightsId *> $null
+& azd env set SPOKE_AI_FOUNDRY_APPINSIGHTS_CONNECTION_NAME $foundryAppInsightsConnectionName *> $null
 & azd env set SPOKE_KEY_VAULT_NAME $KeyVaultName *> $null
 
 Write-Host "`nSpoke resources are ready."
 Write-Host "Resource group: $SpokeResourceGroupName"
 Write-Host "Foundry account: $FoundryAccountName"
 Write-Host "Foundry project: $FoundryProjectName"
+Write-Host "Log Analytics workspace: $logAnalyticsWorkspaceName"
+Write-Host "Application Insights: $appInsightsName"
+Write-Host "Foundry App Insights connection: $foundryAppInsightsConnectionName"
 Write-Host "Key Vault: $KeyVaultName"
 Write-Host "`nAfter deleting these resources, purge soft-deleted names with:"
 Write-Host "az cognitiveservices account purge --name `"$FoundryAccountName`" --resource-group `"$SpokeResourceGroupName`" --location `"$location`""
