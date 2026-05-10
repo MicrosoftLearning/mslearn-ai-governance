@@ -142,23 +142,23 @@ Remove-DefaultProduct -ProductId 'unlimited'
 
 Write-Step 'Checking for remaining default APIM subscriptions'
 $subscriptionListUri = "/subscriptions/$script:SubscriptionId/resourceGroups/$script:ResourceGroup/providers/Microsoft.ApiManagement/service/$script:ApimName/subscriptions?api-version=$apimApiVersion"
-$defaultSubscriptions = (& az rest `
+$remainingSubscriptions = (& az rest `
     --method get `
     --uri $subscriptionListUri `
-    --query "value[?contains(properties.scope, '/products/starter') || contains(properties.scope, '/products/unlimited') || properties.scope == '/apis' || name == 'master'].name" `
+    --query "value[?name != 'master'].name" `
     -o tsv 2>$null)
 
 if ($LASTEXITCODE -ne 0) {
-    $defaultSubscriptions = $null
+    $remainingSubscriptions = $null
 }
 
-$defaultSubscriptionNames = @($defaultSubscriptions | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.ToString().Trim() })
-if ($defaultSubscriptionNames.Count -eq 0) {
-    Write-Host 'No remaining default subscriptions were found.'
+$remainingSubscriptionNames = @($remainingSubscriptions | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.ToString().Trim() })
+if ($remainingSubscriptionNames.Count -eq 0) {
+    Write-Host 'No remaining subscriptions were found after preserving master.'
     exit 0
 }
 
-foreach ($subscriptionName in $defaultSubscriptionNames) {
+foreach ($subscriptionName in $remainingSubscriptionNames) {
     Remove-DefaultSubscription -SubscriptionName $subscriptionName
 }
 

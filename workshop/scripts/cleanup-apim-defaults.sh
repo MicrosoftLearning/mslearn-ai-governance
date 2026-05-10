@@ -108,23 +108,23 @@ delete_default_product starter
 delete_default_product unlimited
 
 log "Checking for remaining default APIM subscriptions"
-default_subscriptions="$(
+remaining_subscriptions="$(
   az rest \
     --method get \
     --uri "/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.ApiManagement/service/${apim_name}/subscriptions?api-version=${APIM_API_VERSION}" \
-    --query "value[?contains(properties.scope, '/products/starter') || contains(properties.scope, '/products/unlimited') || properties.scope == '/apis' || name == 'master'].name" \
+    --query "value[?name != 'master'].name" \
     -o tsv
   2>/dev/null || true
 )"
 
-if [[ -z "$default_subscriptions" ]]; then
-  printf 'No remaining default subscriptions were found.\n'
+if [[ -z "$remaining_subscriptions" ]]; then
+  printf 'No remaining subscriptions were found after preserving master.\n'
   exit 0
 fi
 
 while IFS= read -r subscription_name; do
   [[ -z "$subscription_name" ]] && continue
   delete_default_subscription "$subscription_name"
-done <<< "$default_subscriptions"
+done <<< "$remaining_subscriptions"
 
 printf '\nAPIM default cleanup completed.\n'
