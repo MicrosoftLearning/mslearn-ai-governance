@@ -84,7 +84,7 @@ function Remove-DefaultProduct {
 function Remove-DefaultSubscription {
     param([string]$SubscriptionName)
 
-    $subscriptionUri = "/subscriptions/$script:SubscriptionId/resourceGroups/$script:ResourceGroup/providers/Microsoft.ApiManagement/service/$script:ApimName/subscriptions/$SubscriptionName?api-version=$apimApiVersion"
+    $subscriptionUri = "/subscriptions/$script:SubscriptionId/resourceGroups/$script:ResourceGroup/providers/Microsoft.ApiManagement/service/$script:ApimName/subscriptions/${SubscriptionName}?api-version=$apimApiVersion"
 
     & az rest `
         --method delete `
