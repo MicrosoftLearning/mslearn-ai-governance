@@ -571,13 +571,13 @@ Once you have a successful run, proceed with importing model pricing data.
    COSMOS_ENDPOINT=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $COSMOS_RESOURCE_GROUP --query "documentEndpoint" -o tsv)
 
    # Import model pricing data
-   uv run python scripts\import-model-pricing.py --endpoint $COSMOS_ENDPOINT
+   uv run python scripts/import-model-pricing.py --endpoint $COSMOS_ENDPOINT
    ```
 
    **PowerShell:**
    ```powershell
    $COSMOS_ENDPOINT = az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $COSMOS_RESOURCE_GROUP --query "documentEndpoint" -o tsv
-   uv run python scripts/import-model-pricing.py --endpoint $COSMOS_ENDPOINT
+   uv run python scripts\import-model-pricing.py --endpoint $COSMOS_ENDPOINT
    ```
 
    You should see output confirming each model pricing record was upserted.
