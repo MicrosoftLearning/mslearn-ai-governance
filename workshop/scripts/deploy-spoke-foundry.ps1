@@ -77,6 +77,20 @@ function ConvertTo-TrimmedCliOutput {
     return $text.Trim()
 }
 
+function Invoke-NativeCommandQuietly {
+    param([scriptblock]$Command)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $Command *> $null
+        return $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 function Add-RoleAssignmentIfMissing {
     param(
         [string]$PrincipalId,
@@ -86,15 +100,18 @@ function Add-RoleAssignmentIfMissing {
         [string]$Scope
     )
 
-    $assignmentId = (& az role assignment list `
-        --assignee-object-id $PrincipalId `
-        --role $RoleId `
-        --scope $Scope `
-        --all `
-        --fill-principal-name false `
-        --fill-role-definition-name false `
-        --query '[0].id' `
-        -o tsv 2>$null)
+    $assignmentId = $null
+    try {
+        $assignmentId = (& az role assignment list `
+            --assignee-object-id $PrincipalId `
+            --role $RoleId `
+            --scope $Scope `
+            --all `
+            --fill-principal-name false `
+            --fill-role-definition-name false `
+            --query '[0].id' `
+            -o tsv 2>$null)
+    } catch { $assignmentId = $null }
 
     if (-not [string]::IsNullOrWhiteSpace($assignmentId)) {
         Write-Host "Role assignment already exists: $RoleName"
@@ -114,13 +131,11 @@ function Add-RoleAssignmentIfMissing {
 Assert-Command az
 Assert-Command azd
 
-& az account show *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((Invoke-NativeCommandQuietly { & az account show }) -ne 0) {
     throw 'Azure CLI is not logged in. Run az login, then rerun this script.'
 }
 
-& az cognitiveservices account project -h *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((Invoke-NativeCommandQuietly { & az cognitiveservices account project -h }) -ne 0) {
     throw 'This Azure CLI does not include az cognitiveservices account project. Update Azure CLI and rerun this script.'
 }
 
@@ -180,8 +195,7 @@ Write-Step 'Creating spoke resource group'
     -o none
 
 Write-Step 'Creating Azure AI Foundry account'
-& az cognitiveservices account show --name $FoundryAccountName --resource-group $SpokeResourceGroupName *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((Invoke-NativeCommandQuietly { & az cognitiveservices account show --name $FoundryAccountName --resource-group $SpokeResourceGroupName }) -ne 0) {
     & az cognitiveservices account create `
         --name $FoundryAccountName `
         --resource-group $SpokeResourceGroupName `
@@ -218,7 +232,7 @@ $foundryAccountPatchBody = @{
 } | ConvertTo-Json -Depth 5 -Compress
 
 $foundryAccountPatchPath = Join-Path ([System.IO.Path]::GetTempPath()) ("foundry-account-patch-{0}.json" -f [System.Guid]::NewGuid().ToString('N'))
-Set-Content -Path $foundryAccountPatchPath -Value $foundryAccountPatchBody -Encoding utf8NoBOM
+[System.IO.File]::WriteAllText($foundryAccountPatchPath, $foundryAccountPatchBody, [System.Text.UTF8Encoding]::new($false))
 
 try {
     & az resource patch `
@@ -233,11 +247,7 @@ finally {
 }
 
 Write-Step 'Creating Azure AI Foundry project'
-& az cognitiveservices account project show `
-    --name $FoundryAccountName `
-    --resource-group $SpokeResourceGroupName `
-    --project-name $FoundryProjectName *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((Invoke-NativeCommandQuietly { & az cognitiveservices account project show --name $FoundryAccountName --resource-group $SpokeResourceGroupName --project-name $FoundryProjectName }) -ne 0) {
     & az cognitiveservices account project create `
         --name $FoundryAccountName `
         --resource-group $SpokeResourceGroupName `
@@ -255,8 +265,7 @@ Write-Step 'Ensuring Application Insights CLI extension'
 & az extension add --name application-insights --upgrade --only-show-errors *> $null
 
 Write-Step 'Creating Log Analytics workspace'
-& az monitor log-analytics workspace show --resource-group $SpokeResourceGroupName --workspace-name $logAnalyticsWorkspaceName *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((Invoke-NativeCommandQuietly { & az monitor log-analytics workspace show --resource-group $SpokeResourceGroupName --workspace-name $logAnalyticsWorkspaceName }) -ne 0) {
     & az monitor log-analytics workspace create `
         --resource-group $SpokeResourceGroupName `
         --workspace-name $logAnalyticsWorkspaceName `
@@ -275,8 +284,7 @@ $logAnalyticsWorkspaceId = ConvertTo-TrimmedCliOutput (& az monitor log-analytic
     -o tsv)
 
 Write-Step 'Creating Application Insights'
-& az monitor app-insights component show --app $appInsightsName --resource-group $SpokeResourceGroupName *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((Invoke-NativeCommandQuietly { & az monitor app-insights component show --app $appInsightsName --resource-group $SpokeResourceGroupName }) -ne 0) {
     & az monitor app-insights component create `
         --app $appInsightsName `
         --location $location `
@@ -321,7 +329,7 @@ $foundryConnectionBody = @{
 } | ConvertTo-Json -Depth 6 -Compress
 
 $foundryConnectionBodyPath = Join-Path ([System.IO.Path]::GetTempPath()) ("foundry-project-connection-{0}.json" -f [System.Guid]::NewGuid().ToString('N'))
-Set-Content -Path $foundryConnectionBodyPath -Value $foundryConnectionBody -Encoding utf8NoBOM
+[System.IO.File]::WriteAllText($foundryConnectionBodyPath, $foundryConnectionBody, [System.Text.UTF8Encoding]::new($false))
 
 Write-Step 'Connecting Application Insights to Azure AI Foundry project'
 # The cognitiveservices project connection wrapper currently rejects a valid
@@ -338,8 +346,7 @@ finally {
 }
 
 Write-Step 'Creating Key Vault'
-& az keyvault show --name $KeyVaultName --resource-group $SpokeResourceGroupName *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((Invoke-NativeCommandQuietly { & az keyvault show --name $KeyVaultName --resource-group $SpokeResourceGroupName }) -ne 0) {
     $keyVaultCreateArgs = @(
         'keyvault', 'create',
         '--name', $KeyVaultName,
