@@ -114,6 +114,7 @@ az provider register --namespace Microsoft.OperationalInsights
 az provider register --namespace Microsoft.Storage
 az provider register --namespace Microsoft.Web
 az provider register --namespace Microsoft.Logic
+az provider register --namespace Microsoft.Cache
 
 # Verify registration (may take a few minutes to complete)
 az provider list --query "[?registrationState=='Registered'].namespace" -o table
