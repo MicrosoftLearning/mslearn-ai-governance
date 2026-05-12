@@ -3,6 +3,7 @@ set -euo pipefail
 
 AI_PROJECT_MANAGER_ROLE_ID="eadc314b-1a2d-4efa-be10-5d325db5065e"
 KEY_VAULT_SECRETS_USER_ROLE_ID="4633458b-17de-408a-b874-0445c86b69e6"
+ACR_PULL_ROLE_ID="7f951dda-4ed3-4680-a7ca-43fe172d538d"
 FOUNDRY_APPINSIGHTS_CONNECTION_API_VERSION="2025-06-01"
 
 log() {
@@ -318,6 +319,50 @@ log "Assigning RBAC roles to the signed-in user"
 assign_role_if_missing "$current_user_object_id" User "$AI_PROJECT_MANAGER_ROLE_ID" "Azure AI Project Manager" "$foundry_account_id"
 assign_role_if_missing "$current_user_object_id" User "$KEY_VAULT_SECRETS_USER_ROLE_ID" "Key Vault Secrets User" "$key_vault_id"
 
+# --- Azure Container Registry ---
+
+acr_name="${SPOKE_ACR_NAME:-$(printf 'acr%s%s' "$compact_seed" "$subscription_suffix" | sed 's/[^a-zA-Z0-9]//g' | cut -c1-50)}"
+
+log "Creating Azure Container Registry"
+if ! az acr show --name "$acr_name" --resource-group "$spoke_resource_group_name" >/dev/null 2>&1; then
+  az acr create \
+    --name "$acr_name" \
+    --resource-group "$spoke_resource_group_name" \
+    --location "$location" \
+    --sku Basic \
+    --admin-enabled false \
+    --tags "azd-env-name=${azd_env_name:-unknown}" "workload=citadel-spoke" \
+    -o none
+else
+  printf 'Container Registry already exists: %s\n' "$acr_name"
+fi
+
+acr_id="$(az acr show \
+  --name "$acr_name" \
+  --resource-group "$spoke_resource_group_name" \
+  --query id \
+  -o tsv)"
+
+acr_login_server="$(az acr show \
+  --name "$acr_name" \
+  --resource-group "$spoke_resource_group_name" \
+  --query loginServer \
+  -o tsv)"
+
+log "Assigning AcrPull to Foundry project managed identity"
+foundry_project_mi_object_id="$(az cognitiveservices account project show \
+  --name "$foundry_account_name" \
+  --resource-group "$spoke_resource_group_name" \
+  --project-name "$foundry_project_name" \
+  --query 'identity.principalId' \
+  -o tsv 2>/dev/null || true)"
+
+if [[ -n "$foundry_project_mi_object_id" ]]; then
+  assign_role_if_missing "$foundry_project_mi_object_id" ServicePrincipal "$ACR_PULL_ROLE_ID" "AcrPull (Foundry project MI)" "$acr_id"
+else
+  printf 'Warning: Could not resolve Foundry project managed identity. AcrPull role assignment skipped.\n' >&2
+fi
+
 log "Saving spoke resource values to azd environment"
 azd env set SPOKE_RESOURCE_GROUP "$spoke_resource_group_name" >/dev/null
 azd env set SPOKE_AI_FOUNDRY_ACCOUNT_NAME "$foundry_account_name" >/dev/null
@@ -327,6 +372,8 @@ azd env set SPOKE_APP_INSIGHTS_NAME "$app_insights_name" >/dev/null
 azd env set SPOKE_APP_INSIGHTS_ID "$app_insights_id" >/dev/null
 azd env set SPOKE_AI_FOUNDRY_APPINSIGHTS_CONNECTION_NAME "$foundry_appinsights_connection_name" >/dev/null
 azd env set SPOKE_KEY_VAULT_NAME "$key_vault_name" >/dev/null
+azd env set SPOKE_ACR_NAME "$acr_name" >/dev/null
+azd env set SPOKE_ACR_LOGIN_SERVER "$acr_login_server" >/dev/null
 
 cat <<EOF
 
@@ -338,6 +385,7 @@ Log Analytics workspace: $log_analytics_workspace_name
 Application Insights: $app_insights_name
 Foundry App Insights connection: $foundry_appinsights_connection_name
 Key Vault: $key_vault_name
+Container Registry: $acr_name ($acr_login_server)
 
 After deleting these resources, purge soft-deleted names with:
 az cognitiveservices account purge --name "$foundry_account_name" --resource-group "$spoke_resource_group_name" --location "$location"

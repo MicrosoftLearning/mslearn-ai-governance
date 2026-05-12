@@ -15,6 +15,7 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
 
 $aiProjectManagerRoleId = 'eadc314b-1a2d-4efa-be10-5d325db5065e'
 $keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+$acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 $foundryAppInsightsConnectionApiVersion = '2025-06-01'
 
 function Write-Step {
@@ -388,6 +389,52 @@ Write-Step 'Assigning RBAC roles to the signed-in user'
 Add-RoleAssignmentIfMissing -PrincipalId $currentUserObjectId -PrincipalType User -RoleId $aiProjectManagerRoleId -RoleName 'Azure AI Project Manager' -Scope $foundryAccountId
 Add-RoleAssignmentIfMissing -PrincipalId $currentUserObjectId -PrincipalType User -RoleId $keyVaultSecretsUserRoleId -RoleName 'Key Vault Secrets User' -Scope $keyVaultId
 
+# --- Azure Container Registry ---
+
+$acrName = if ($env:SPOKE_ACR_NAME) { $env:SPOKE_ACR_NAME } else { "acr$compactSeed$subscriptionSuffix" }
+$acrName = $acrName -replace '[^a-zA-Z0-9]', ''
+if ($acrName.Length -gt 50) { $acrName = $acrName.Substring(0, 50) }
+
+Write-Step 'Creating Azure Container Registry'
+if ((Invoke-NativeCommandQuietly { & az acr show --name $acrName --resource-group $SpokeResourceGroupName }) -ne 0) {
+    & az acr create `
+        --name $acrName `
+        --resource-group $SpokeResourceGroupName `
+        --location $location `
+        --sku Basic `
+        --admin-enabled false `
+        --tags "azd-env-name=$tagEnvName" 'workload=citadel-spoke' `
+        -o none
+} else {
+    Write-Host "Container Registry already exists: $acrName"
+}
+
+$acrId = ConvertTo-TrimmedCliOutput (& az acr show `
+    --name $acrName `
+    --resource-group $SpokeResourceGroupName `
+    --query id `
+    -o tsv)
+
+$acrLoginServer = ConvertTo-TrimmedCliOutput (& az acr show `
+    --name $acrName `
+    --resource-group $SpokeResourceGroupName `
+    --query loginServer `
+    -o tsv)
+
+Write-Step 'Assigning AcrPull to Foundry project managed identity'
+$foundryProjectMiObjectId = ConvertTo-TrimmedCliOutput (& az cognitiveservices account project show `
+    --name $FoundryAccountName `
+    --resource-group $SpokeResourceGroupName `
+    --project-name $FoundryProjectName `
+    --query 'identity.principalId' `
+    -o tsv)
+
+if (-not [string]::IsNullOrWhiteSpace($foundryProjectMiObjectId)) {
+    Add-RoleAssignmentIfMissing -PrincipalId $foundryProjectMiObjectId -PrincipalType ServicePrincipal -RoleId $acrPullRoleId -RoleName 'AcrPull (Foundry project MI)' -Scope $acrId
+} else {
+    Write-Warning 'Could not resolve Foundry project managed identity. AcrPull role assignment skipped.'
+}
+
 Write-Step 'Saving spoke resource values to azd environment'
 & azd env set SPOKE_RESOURCE_GROUP $SpokeResourceGroupName *> $null
 & azd env set SPOKE_AI_FOUNDRY_ACCOUNT_NAME $FoundryAccountName *> $null
@@ -397,6 +444,8 @@ Write-Step 'Saving spoke resource values to azd environment'
 & azd env set SPOKE_APP_INSIGHTS_ID $appInsightsId *> $null
 & azd env set SPOKE_AI_FOUNDRY_APPINSIGHTS_CONNECTION_NAME $foundryAppInsightsConnectionName *> $null
 & azd env set SPOKE_KEY_VAULT_NAME $KeyVaultName *> $null
+& azd env set SPOKE_ACR_NAME $acrName *> $null
+& azd env set SPOKE_ACR_LOGIN_SERVER $acrLoginServer *> $null
 
 Write-Host "`nSpoke resources are ready."
 Write-Host "Resource group: $SpokeResourceGroupName"
