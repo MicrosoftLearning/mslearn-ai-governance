@@ -30,6 +30,7 @@ Using policy fragments allows to keep the routing logic modular and reusable acr
 - `set-backend-authorization`: Configures appropriate authentication for the target backend (respects `skipBackendUrlRewrite` for Unified AI)
 - `set-llm-usage`: Collects token usage metrics
 - `validate-model-access`: Model access control per product
+- `resolve-model-alias`: Resolves a client-facing alias name (e.g. `adv-gpt`) to an actual underlying model based on `priority` or `weighted` strategy
 
 **Shared fragment** (used by Universal LLM and Azure OpenAI only):
 - `set-llm-requested-model`: Extracts the requested model from the request path or body
@@ -398,6 +399,7 @@ Provides unified authentication across all API endpoints.
 
 Steps 5 through 8 use the same shared fragments as the Universal LLM and Azure OpenAI APIs:
 - **validate-model-access**: Checks `allowedModels` per product
+- **resolve-model-alias**: If `requestedModel` matches an alias name, replaces it with an underlying real model based on `priority` or `weighted` strategy. Sets `is-alias`, `original-model-alias`, and `alias-models` so the retry block can perform cross-model fallback. No-op when `requestedModel` is not an alias.
 - **set-backend-pools**: Loads backend pool configurations
 - **set-target-backend-pool**: Matches model to pool. For Unified AI, also checks `apiTypeOverrideBackend` — when set, bypasses pool matching and routes to the specified backend directly
 - **set-backend-authorization**: Sets managed identity token and backend service. Skips URL rewriting because `skipBackendUrlRewrite` is set by `request-processor`
@@ -448,6 +450,69 @@ The Unified AI API includes named operations for model discovery that bypass the
 - **`GET /unified-ai/deployments/{deployment-id}`** — Returns details for a specific model, or `404` if not found
 
 These operations use the shared `get-available-models` fragment and are handled by operation-level policies, not the wildcard catch-all.
+
+## Model Aliases
+
+Model aliases let an admin expose a single client-facing name (e.g. `adv-gpt`) that the gateway resolves at runtime to one of several real underlying models (e.g. `gpt-5.4-mini`, `gpt-4.1`). Clients depend only on the alias, while the platform team is free to switch the underlying model line-up — useful for graceful model retirements, A/B testing, and cross-model fallback.
+
+The same alias map is honored consistently across **all three LLM endpoints**:
+
+- **Azure OpenAI API** — `/openai/deployments/{alias}/chat/completions`
+- **Universal LLM API** — `/models/chat/completions` with `"model": "{alias}"` in the body
+- **Unified AI API** — any `/unified-ai/...` path that supplies a model in the body or URL
+
+### Shared Resolution Fragment (`resolve-model-alias`)
+
+A single policy fragment is invoked by every API after model extraction and access validation:
+
+| API | Step | Notes |
+|---|---|---|
+| Azure OpenAI | After `validate-model-access`, before `set-backend-pools` | Static inline alias map (no metadata-config) |
+| Universal LLM | After `validate-model-access`, before `set-backend-pools` | Static inline alias map (no metadata-config) |
+| Unified AI | After `validate-model-access`, before `set-backend-pools` | Reads from `config-model-aliases` (cached metadata-config); inline map acts as fallback |
+
+When the requested model matches an alias, the fragment:
+
+1. Sets `original-model-alias` = the alias name and `is-alias` = `true`.
+2. Picks an underlying real model based on `strategy` (`priority` or `weighted`) and overwrites `requestedModel` with it.
+3. Rewrites the JSON body's `model` field if present, so the backend receives the **resolved** model name.
+4. Rewrites the URL path `/deployments/{alias}/...` → `/deployments/{realModel}/...` so URL-based routing (Azure OpenAI / Unified AI `openai` api-type) targets the correct backend deployment.
+5. Exposes `alias-models` (a `JArray` of all underlying models) for downstream cross-model retry logic.
+
+When the requested model is **not** an alias, the fragment is a no-op — direct model selection is preserved unchanged.
+
+### Resolution Strategies
+
+| Strategy | Behavior | Best For |
+|----------|----------|----------|
+| `priority` (default) | The first model in `models` is always chosen. Other models act as fallback candidates for the Unified AI API retry block. | Production routing with a preferred primary and well-defined hot-spares. |
+| `weighted` | Each request picks a model at random with probability proportional to `weights`. | A/B testing, controlled rollout of a new model, blended traffic across model families. |
+
+### Cross-Model Fallback (Unified AI)
+
+The Unified AI API's `<retry>` block is alias-aware: when `is-alias` is `true`, the retry budget is extended by the number of fallback models in the alias. On a transient failure (429 / 5xx) from the currently selected model, the gateway:
+
+1. Increments `alias-retry-index`.
+2. Switches `requestedModel` to the next model in `alias-models`.
+3. Re-runs `set-target-backend-pool`, `set-backend-authorization`, and `path-builder` so the request is re-issued through the matching backend pool of the new model.
+
+> **Pre-stream only.** Once the response stream has started, the body is committed and cross-model fallback is not possible. Azure OpenAI and Universal LLM APIs do not implement cross-model fallback today — they perform pool-level retries against the resolved model only.
+
+### Access Control
+
+The `validate-model-access` fragment runs **before** `resolve-model-alias`. The product policy's `allowedModels` therefore controls access to the **alias name** (the contract-level identifier the client sees), not the underlying real models. Granting `allowedModels = "adv-gpt"` exposes only the alias and keeps the underlying `gpt-5.4-mini` / `gpt-4.1` deployments unreachable through that subscription.
+
+### Diagnostics
+
+| Source | Where to look |
+|---|---|
+| `original-model-alias`, `is-alias` | APIM trace policy (`Resolve-Model-Alias` source), `UAIG-*` debug headers (Unified AI when `enableResponseHeaders` is true) |
+| Resolved model | `requestedModel` variable, `UAIG-Model-Id` header, App Insights `customDimensions.deploymentName` |
+| Cross-model fallback hops | `alias-retry-index` variable, repeated `set-target-backend-pool` traces |
+
+### Configuration
+
+Aliases are declared in the `modelAliases` array of the LLM Backend Onboarding `.bicepparam` file. Each onboarding deployment regenerates **both** the `metadata-config` JSON (for Unified AI) and the `resolve-model-alias` fragment's inline static map (for Azure OpenAI / Universal LLM) from the same source — keeping the two views in sync. See [LLM Backend Onboarding — Model Aliases](../bicep/infra/llm-backend-onboarding/README.md#model-aliases) for the full property reference and examples.
 
 ## Backend Pool Types
 
@@ -561,6 +626,7 @@ The `set-llm-usage` fragment emits token metrics for monitoring:
 | `set-backend-authorization` | Sets authentication and backend service (respects `skipBackendUrlRewrite` for Unified AI) |
 | `set-llm-usage` | Collects token usage metrics |
 | `validate-model-access` | Model access control per product |
+| `resolve-model-alias` | Resolves a client-facing alias (e.g. `adv-gpt`) to an actual underlying model based on `priority` or `weighted` strategy. No-op when `requestedModel` is not an alias. |
 | `get-available-models` | Returns filtered list of models for deployment discovery |
 | `ai-foundry-compatibility` | CORS configuration for AI Foundry |
 | `raise-throttling-events` | Sends throttling metrics on errors |

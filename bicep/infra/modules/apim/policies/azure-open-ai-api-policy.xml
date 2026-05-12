@@ -50,12 +50,12 @@
             </when>
         </choose>
 
-        <!-- Step 3.1: capture original API path -->
-         <set-variable name="openAIRewriteTemplate" value="@{
-                string requestedModel = (string)context.Variables["requestedModel"];
-                string path = context.Request.Url.Path.TrimStart('/');
-                return string.Format("openai/{0}", path);
-            }" />
+        <!-- Step 3.1: capture original API path
+             NOTE: This MUST run after `resolve-model-alias` (step 4.1) so the captured path
+             reflects the resolved model name when the request used an alias. The variable is
+             evaluated lazily at the final <rewrite-uri> below, but the template only embeds
+             `context.Request.Url.Path` — so any alias→real-model URL rewrite performed by
+             `resolve-model-alias` is preserved. -->
         
         <!-- Override api-version query parameter if clients are getting 404 due to mismatched api-version -->
         <!-- <set-query-parameter name="api-version" exists-action="override">
@@ -72,6 +72,37 @@
         <!-- Validate model access based on allowedModels -->
         <include-fragment fragment-id="validate-model-access" />
 
+        <!-- Step 4.1: Resolve model alias (if requestedModel is an alias name like "adv-gpt",
+             replace it with the actual underlying model). No-op when no aliases are configured.
+             Access control above runs against the alias name so admins can grant access to the
+             alias directly without enumerating underlying models. -->
+        <include-fragment fragment-id="resolve-model-alias" />
+
+        <!-- Step 4.2: Build the URL-rewrite template AFTER alias resolution.
+             APIM's `context.Request.Url.Path` returns the ORIGINAL request path —
+             `<rewrite-uri>` does not mutate it. So when a client calls
+             `/openai/deployments/{alias}/chat/completions`, the path here still has the
+             alias even though `resolve-model-alias` already swapped requestedModel.
+             We explicitly substitute the alias segment for the resolved real model name
+             so the URL forwarded to the AOAI backend uses `/deployments/{realModel}/...`. -->
+         <set-variable name="openAIRewriteTemplate" value="@{
+                string requestedModel = (string)context.Variables["requestedModel"];
+                string originalAlias  = context.Variables.GetValueOrDefault<string>("original-model-alias", "");
+                string path = context.Request.Url.Path.TrimStart('/');
+                if (!string.IsNullOrEmpty(originalAlias)) {
+                    var marker = "deployments/" + originalAlias;
+                    var idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                    if (idx >= 0) {
+                        int afterAliasStart = idx + marker.Length;
+                        // Only swap if alias is a complete URL segment (followed by '/' or end)
+                        if (afterAliasStart >= path.Length || path[afterAliasStart] == '/') {
+                            path = path.Substring(0, idx) + "deployments/" + requestedModel + path.Substring(afterAliasStart);
+                        }
+                    }
+                }
+                return string.Format("openai/{0}", path);
+            }" />
+
         <!-- Step 4: Load backend pool configurations -->
         <include-fragment fragment-id="set-backend-pools" />
 
@@ -80,6 +111,8 @@
 
         <!-- Step 6: Configure authentication and route to selected backend -->
         <include-fragment fragment-id="set-backend-authorization" />
+        <!-- Step 6.1: Strip browser / App Service / X-Forwarded-* headers before forwarding to backend-->
+        <include-fragment fragment-id="strip-backend-headers" />
 
         <!-- Step 7: Configure collecting usage metrics -->
         <include-fragment fragment-id="set-llm-usage" />

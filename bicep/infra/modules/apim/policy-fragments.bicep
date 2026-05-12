@@ -152,6 +152,20 @@ resource stripBackendHeadersFragment 'Microsoft.ApiManagement/service/policyFrag
   }
 }
 
+// Resolve Model Alias fragment - shared by all 3 LLM APIs (Azure OpenAI, Universal LLM, Unified AI).
+// Initially deployed with an empty inline alias map so policies compile before any aliases are
+// onboarded. The llm-backend-onboarding deployment overwrites this fragment with the configured
+// modelAliases entries inlined as a static JObject (and also publishes them via metadata-config).
+resource resolveModelAliasFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  parent: apimService
+  name: 'resolve-model-alias'
+  properties: {
+    description: 'Resolves model alias names to actual underlying models with priority/weighted strategy'
+    value: replace(loadTextContent('./policies/frag-resolve-model-alias.xml'), '//{inlineAliasesCode}', '')
+    format: 'rawxml'
+  }
+}
+
 // ------------------
 //    OUTPUTS
 // ------------------
@@ -179,3 +193,6 @@ output pathBuilderFragmentName string = enableUnifiedAiApi ? pathBuilderFragment
 output securityHandlerFragmentName string = enableUnifiedAiApi ? securityHandlerFragment.name : ''
 @description('The name of the set response headers policy fragment')
 output setResponseHeadersFragmentName string = enableUnifiedAiApi ? setResponseHeadersFragment.name : ''
+
+@description('The name of the resolve model alias policy fragment')
+output resolveModelAliasFragmentName string = resolveModelAliasFragment.name

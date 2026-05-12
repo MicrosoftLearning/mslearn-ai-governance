@@ -1157,3 +1157,5 @@ output ENTRA_AUTH_ENABLED bool = entraAuth
 output ENTRA_CLIENT_ID string = resolvedEntraClientId
 output ENTRA_TENANT_ID string = resolvedEntraTenantId
 output ENTRA_AUDIENCE string = resolvedEntraAudience
+output COSMOS_DB_ACCOUNT_NAME string = cosmosDb.outputs.cosmosDbAccountName
+output EVENT_HUB_NAME string = eventHub.outputs.eventHubName

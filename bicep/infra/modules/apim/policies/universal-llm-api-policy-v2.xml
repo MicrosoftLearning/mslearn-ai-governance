@@ -42,6 +42,12 @@
         <!-- Validate model access based on allowedModels -->
         <include-fragment fragment-id="validate-model-access" />
 
+        <!-- Step 4.1: Resolve model alias (if requestedModel is an alias name like "adv-gpt",
+             replace it with the actual underlying model). No-op when no aliases are configured.
+             Access control above runs against the alias name so admins can grant access to the
+             alias directly without enumerating underlying models. -->
+        <include-fragment fragment-id="resolve-model-alias" />
+
         <!-- Step 4: Load backend pool configurations -->
         <include-fragment fragment-id="set-backend-pools" />
 

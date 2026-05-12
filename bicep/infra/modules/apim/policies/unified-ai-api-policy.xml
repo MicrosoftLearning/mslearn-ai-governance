@@ -71,6 +71,13 @@
         <!-- Step 5: Model access control per product [SHARED with Azure OpenAI / Universal LLM] -->
         <include-fragment fragment-id="validate-model-access" />
 
+        <!-- Step 5.1: Resolve model alias (uses config-model-aliases from cached metadata-config). -->
+        <!-- Sets is-alias, original-model-alias, alias-models — the unified-ai-api retry block -->
+        <!-- uses alias-models for cross-model fallback on transient backend failures. -->
+        <!-- Access control above runs against the alias name so admins can grant access to the -->
+        <!-- alias directly without enumerating underlying models. [SHARED] -->
+        <include-fragment fragment-id="resolve-model-alias" />
+
         <!-- RBAC: Set allowed backend pools (comma-separated pool IDs, empty = all pools allowed) -->
         <set-variable name="allowedBackendPools" value="" />
         <!-- Set default backend pool (empty = return error for unmapped models) -->
@@ -78,7 +85,9 @@
 
         <!-- Step 6: Load backend pool configurations [SHARED with Azure OpenAI / Universal LLM] -->
         <include-fragment fragment-id="set-backend-pools" />
-
+        <!-- Step 6.1: Strip browser / App Service / X-Forwarded-* headers before forwarding to backend -->
+        <include-fragment fragment-id="strip-backend-headers" />
+        
         <!-- Step 7: Select target backend pool [SHARED - extended with apiTypeOverrideBackend for Unified AI] -->
         <include-fragment fragment-id="set-target-backend-pool" />
 

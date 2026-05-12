@@ -76,8 +76,26 @@ var modelDeploymentsCodeResult = reduce(llmBackendConfig, { code: '', index: 0 }
 
 var modelDeploymentsCode = modelDeploymentsCodeResult.code
 
+// Generate JObject entries for each configured alias so they appear in the
+// `get-available-models` (and `/deployments`) discovery responses alongside real
+// model deployments. Each alias entry includes a `description` field under
+// `capabilities` describing the underlying real models and routing strategy —
+// clients can introspect what an alias maps to without leaving the gateway.
+// `validate-model-access` (and the discovery-level `allowedModels` filter) match
+// on `name`, so adding the alias here automatically extends RBAC to aliases.
+var aliasModelsCsv = [for i in range(0, length(modelAliases)): join(modelAliases[i].models, ', ')]
+var aliasStrategyText = [for i in range(0, length(modelAliases)): modelAliases[i].?strategy ?? 'priority']
+var aliasWeightsSuffix = [for i in range(0, length(modelAliases)): contains(modelAliases[i], 'weights') ? '; weights: ${join(map(modelAliases[i].weights, w => string(w)), ', ')}' : '']
+var aliasDescriptions = [for i in range(0, length(modelAliases)): 'Alias for: ${aliasModelsCsv[i]} (strategy: ${aliasStrategyText[i]}${aliasWeightsSuffix[i]})']
+var aliasDeploymentEntries = [for i in range(0, length(modelAliases)): '\n// Alias: ${modelAliases[i].name}\nvar aliasDeployment_${i} = new JObject()\n{\n    { "id", "alias" },\n    { "type", "alias" },\n    { "name", "${modelAliases[i].name}" },\n    { "sku", new JObject() { { "name", "Standard" }, { "capacity", 100 } } },\n    { "properties", new JObject() {\n        { "model", new JObject() { { "format", "Alias" }, { "name", "${modelAliases[i].name}" }, { "version", "1" } } },\n        { "capabilities", new JObject() { { "chatCompletion", "true" }, { "description", "${aliasDescriptions[i]}" } } },\n        { "provisioningState", "Succeeded" }\n    }}\n};\nmodelDeployments.Add(aliasDeployment_${i});']
+var aliasDeploymentsCode = join(aliasDeploymentEntries, '\n')
+
+// Append alias entries after real model deployments — they share the same JArray
+// and downstream filtering (allowedModels) treats them identically.
+var modelDeploymentsCodeWithAliases = '${modelDeploymentsCode}${aliasDeploymentsCode}'
+
 // Inject generated model deployments code into available models template
-var updatedGetAvailableModelsFragmentXml = replace(getAvailableModelsFragmentTemplate, '//{modelDeploymentsCode}', modelDeploymentsCode)
+var updatedGetAvailableModelsFragmentXml = replace(getAvailableModelsFragmentTemplate, '//{modelDeploymentsCode}', modelDeploymentsCodeWithAliases)
 
 // Generate metadata-config fragment for the Unified AI API
 // Maps each model to its backend pool/direct backend + apiVersion + timeout + inferenceApiVersion
@@ -91,13 +109,24 @@ var metadataModelsCode = metadataModelsResult.code
 var metadataConfigFragmentXml = loadTextContent('./policies/frag-metadata-config.xml')
 var updatedMetadataConfigStep1 = replace(metadataConfigFragmentXml, '//{modelsConfigCode}', metadataModelsCode)
 
-// Generate model aliases code from modelAliases parameter using reduce pattern
-var modelAliasesResult = reduce(modelAliases, { code: '', count: 0 }, (acc, alias) => {
-  code: '${acc.code}${acc.count > 0 ? ',\n' : ''}\t\t\t\'${alias.name}\': {\n\t\t\t\t\'models\': [${join(map(alias.models, m => '\'${m}\''), ', ')}],\n\t\t\t\t\'strategy\': \'${alias.?strategy ?? 'priority'}\'\n\t\t\t}'
-  count: acc.count + 1
-})
-var modelAliasesCode = modelAliasesResult.code
+// Generate model aliases code from modelAliases parameter.
+// Used inside the metadata-config JSON (parsed and cached by central-cache-manager).
+// Built with map+join to keep string interpolation simple (Bicep limits on nested `${}`).
+var modelAliasesEntries = map(modelAliases, alias => '\t\t\t\'${alias.name}\': {\n\t\t\t\t\'models\': [${join(map(alias.models, m => '\'${m}\''), ', ')}],\n\t\t\t\t\'strategy\': \'${alias.?strategy ?? 'priority'}\'${contains(alias, 'weights') ? ',\n\t\t\t\t\'weights\': WEIGHTS_PLACEHOLDER' : ''}\n\t\t\t}')
+var aliasWeightArrays = map(modelAliases, alias => contains(alias, 'weights') ? '[${join(map(alias.weights, w => string(w)), ', ')}]' : '')
+var modelAliasesEntriesWithWeights = [for i in range(0, length(modelAliases)): replace(modelAliasesEntries[i], 'WEIGHTS_PLACEHOLDER', aliasWeightArrays[i])]
+var modelAliasesCode = join(modelAliasesEntriesWithWeights, ',\n')
 var updatedMetadataConfigFragmentXml = replace(updatedMetadataConfigStep1, '//{modelAliasesCode}', modelAliasesCode)
+
+// Generate inline-aliases C# code for the resolve-model-alias fragment.
+// This is the static fallback used by Azure OpenAI / Universal LLM APIs that don't load
+// metadata-config. Each alias becomes a JObject entry with models[], strategy, optional weights[].
+var inlineAliasesEntries = map(modelAliases, alias => '            { "${alias.name}", new JObject() { { "models", new JArray(${join(map(alias.models, m => '"${m}"'), ', ')}) }, { "strategy", "${alias.?strategy ?? 'priority'}" }${contains(alias, 'weights') ? ', { "weights", new JArray(WEIGHTS_PLACEHOLDER) }' : ''} } }')
+var inlineAliasWeightArgs = map(modelAliases, alias => contains(alias, 'weights') ? join(map(alias.weights, w => string(w)), ', ') : '')
+var inlineAliasesEntriesWithWeights = [for i in range(0, length(modelAliases)): replace(inlineAliasesEntries[i], 'WEIGHTS_PLACEHOLDER', inlineAliasWeightArgs[i])]
+var inlineAliasesCode = join(inlineAliasesEntriesWithWeights, ',\n')
+var resolveModelAliasFragmentTemplate = loadTextContent('./policies/frag-resolve-model-alias.xml')
+var updatedResolveModelAliasFragmentXml = replace(resolveModelAliasFragmentTemplate, '//{inlineAliasesCode}', inlineAliasesCode)
 
 // ------------------
 //    RESOURCES
@@ -291,6 +320,21 @@ resource metadataConfigFragment 'Microsoft.ApiManagement/service/policyFragments
   }
 }
 
+// Policy Fragment: Resolve Model Alias
+// Resolves a client-facing alias (e.g. "adv-gpt") to a real underlying model based on
+// 'priority' or 'weighted' strategy. Shared by Azure OpenAI, Universal LLM, and Unified AI APIs.
+// Inline alias map is generated at deploy time from the modelAliases parameter; falls back
+// to config-model-aliases (cached metadata-config) when invoked from the Unified AI policy.
+resource resolveModelAliasFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  name: 'resolve-model-alias'
+  parent: apimService
+  properties: {
+    description: 'Resolves model alias names to actual underlying models with priority/weighted strategy'
+    format: 'rawxml'
+    value: updatedResolveModelAliasFragmentXml
+  }
+}
+
 // ------------------
 //    OUTPUTS
 // ------------------
@@ -312,6 +356,9 @@ output validateModelAccessFragmentName string = validateModelAccessFragment.name
 
 @description('Name of the metadata-config fragment')
 output metadataConfigFragmentName string = metadataConfigFragment.name
+
+@description('Name of the resolve-model-alias fragment')
+output resolveModelAliasFragmentName string = resolveModelAliasFragment.name
 
 @description('Name of the responses-id-security fragment')
 output responsesIdSecurityFragmentName string = responsesIdSecurityFragment.name

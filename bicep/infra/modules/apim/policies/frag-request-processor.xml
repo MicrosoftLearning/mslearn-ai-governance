@@ -40,6 +40,26 @@
     <!-- Remove API path prefix: /unified-ai/openai/chat/completions -> /openai/chat/completions -->
     <set-variable name="routing-processed-path" value="@(context.Request.Url.Path.Replace(context.Api.Path, "").TrimStart('/').Insert(0, "/"))" />
 
+    <!-- Detect non-LLM operation paths that are handled by named API operations (deployment
+         discovery for Microsoft Foundry integration). These intentionally do NOT match any
+         api-type base-path because they are served by operation-level policies that include
+         <base/> — so the API-level policy (this fragment) runs first and must let them through.
+         Examples: GET /deployments, GET /deployments/{deployment-id} -->
+    <set-variable name="is-non-llm-operation" value="@{
+        var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty);
+        var method = context.Request.Method;
+        if (!method.Equals("GET", StringComparison.OrdinalIgnoreCase)) { return false; }
+        // Match /deployments or /deployments/{name} (no further segments)
+        var trimmed = path.TrimEnd('/');
+        if (trimmed.Equals("/deployments", StringComparison.OrdinalIgnoreCase)) { return true; }
+        if (trimmed.StartsWith("/deployments/", StringComparison.OrdinalIgnoreCase)) {
+            var rest = trimmed.Substring("/deployments/".Length);
+            // Single segment after /deployments/ → deployment-by-name lookup
+            if (!String.IsNullOrEmpty(rest) && !rest.Contains("/")) { return true; }
+        }
+        return false;
+    }" />
+
     <!-- Determine API type from request path by matching against configured base-paths.
          Uses prefix matching (StartsWith) instead of substring (Contains) so that
          unrecognized prefixes like /v2/openai/... do NOT accidentally match /openai.
@@ -68,8 +88,23 @@
         } catch { return String.Empty; }
     }" />
 
-    <!-- Reject requests that don't match any configured API type base-path -->
+    <!-- Reject requests that don't match any configured API type base-path,
+         UNLESS the request is a known non-LLM operation (e.g., GET /deployments,
+         GET /deployments/{deployment-id}) that is intentionally served by an
+         operation-level policy via the get-available-models fragment. Those routes
+         do not — and should not — match any api-type base-path; we let processing
+         continue with safe defaults. The downstream fragments
+         (validate-model-access, set-target-backend-pool, set-backend-authorization,
+         set-llm-usage, path-builder) all short-circuit on requestedModel == "non-llm-request",
+         so the API-level policy becomes a no-op and the operation policy runs the lookup. -->
     <choose>
+        <when condition="@((bool)context.Variables.GetValueOrDefault<bool>("is-non-llm-operation", false))">
+            <!-- Force a synthetic api-type so the lookup below resolves to null safely. -->
+            <set-variable name="api-type" value="non-llm" />
+            <trace source="Request-Processor" severity="information">
+                <message>@($"Unified AI - Non-LLM operation: {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "n/a")} — bypassing api-type validation; operation-level policy will handle it")</message>
+            </trace>
+        </when>
         <when condition="@(String.IsNullOrEmpty(context.Variables.GetValueOrDefault<string>("api-type", String.Empty)))">
             <trace source="Request-Processor-Blocked" severity="error">
                 <message>@($"Unified AI - Blocked request to {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "unknown")} from {context.Request.IpAddress}")</message>
@@ -200,80 +235,10 @@
         </when>
     </choose>
 
-    <!-- Model alias resolution: check if requestedModel is an alias and resolve to actual model -->
-    <set-variable name="original-model-alias" value="" />
-    <set-variable name="is-alias" value="@(false)" />
-    <set-variable name="alias-models" value="@(new JArray())" />
-    <choose>
-        <when condition="@{
-            var model = context.Variables.GetValueOrDefault<string>("requestedModel", "");
-            if (string.IsNullOrEmpty(model) || model == "non-llm-request") { return false; }
-            var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
-            return aliases != null && aliases.Property(model) != null;
-        }">
-            <set-variable name="original-model-alias" value="@(context.Variables.GetValueOrDefault<string>("requestedModel", ""))" />
-            <set-variable name="is-alias" value="@(true)" />
-            <set-variable name="alias-models" value="@{
-                var alias = context.Variables.GetValueOrDefault<string>("requestedModel", "");
-                var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
-                if (aliases == null) { return new JArray(); }
-                var prop = aliases.Property(alias);
-                if (prop == null) { return new JArray(); }
-                var aliasEntry = prop.Value as JObject;
-                if (aliasEntry == null) { return new JArray(); }
-                var modelsProp = aliasEntry.Property("models");
-                if (modelsProp == null) { return new JArray(); }
-                var models = modelsProp.Value as JArray;
-                return models ?? new JArray();
-            }" />
-            <set-variable name="requestedModel" value="@{
-                var alias = context.Variables.GetValueOrDefault<string>("original-model-alias", "");
-                var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
-                if (aliases == null) { return alias; }
-                var prop = aliases.Property(alias);
-                if (prop == null) { return alias; }
-                var aliasConfig = prop.Value as JObject;
-                if (aliasConfig == null) { return alias; }
-                var modelsProp = aliasConfig.Property("models");
-                if (modelsProp == null) { return alias; }
-                var models = modelsProp.Value as JArray;
-                if (models == null || models.Count == 0) { return alias; }
-
-                var strategyProp = aliasConfig.Property("strategy");
-                var strategy = strategyProp != null ? strategyProp.Value.ToString() : "priority";
-                if (strategy.Equals("weighted", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Weighted round-robin using cache counter
-                    var weightsProp = aliasConfig.Property("weights");
-                    var weights = weightsProp != null ? weightsProp.Value as JArray : null;
-                    if (weights != null && weights.Count == models.Count)
-                    {
-                        var productId = context.Product != null ? context.Product.Id : "default";
-                        var cacheKey = "alias-counter-" + alias + "-" + productId;
-                        int counter = 0;
-                        try {
-                            if (context.Variables.ContainsKey(cacheKey)) {
-                                var cached = context.Variables.GetValueOrDefault<string>(cacheKey, "");
-                                if (!string.IsNullOrEmpty(cached)) { int.TryParse(cached, out counter); }
-                            }
-                        } catch { }
-
-                        int totalWeight = 0;
-                        foreach (var w in weights) { totalWeight += w.Value<int>(); }
-                        int pick = counter % Math.Max(totalWeight, 1);
-                        int cumulative = 0;
-                        for (int i = 0; i < models.Count; i++)
-                        {
-                            cumulative += weights[i].Value<int>();
-                            if (pick < cumulative) { return models[i].ToString(); }
-                        }
-                    }
-                }
-                // Default: priority — return first model
-                return models[0].ToString();
-            }" />
-        </when>
-    </choose>
+    <!-- Model alias resolution is now performed by the shared `resolve-model-alias` fragment,
+         invoked by the unified-ai-api-policy after request-processor. The shared fragment reads
+         `config-model-aliases` (set by central-cache-manager) so aliases stay sourced from the
+         cached metadata-config — and falls back to the inline static map for the other APIs. -->
 
     <!-- Validate that model parameter is present (skip for non-LLM requests) -->
     <choose>

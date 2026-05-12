@@ -1,4 +1,4 @@
-# 🚀 Citadel Backend Contract
+# 🚀 Governance Hub Backend Contract
 
 ## Overview
 
@@ -21,6 +21,7 @@ This package enables dynamic LLM backend routing without modifying APIM policies
 | **Policy Fragments** | Dynamic routing logic for model-based routing |
 | **Get Available Models Fragment** | Returns available model deployments with capabilities (similar to Azure Cognitive Services API) |
 | **Metadata Config Fragment** | Centralized model routing config for the Unified AI API — always deployed with backend onboarding to stay in sync |
+| **Resolve Model Alias Fragment** | Resolves client-facing alias names (e.g. `adv-gpt` as an alias for gpt-5.2 and gpt-4.1) to actual underlying models — shared across Azure OpenAI, Universal LLM, and Unified AI APIs |
 
 ## Prerequisites
 
@@ -315,6 +316,108 @@ param awsRegion = 'us-east-1'
    → Client receives response with usage headers
 ```
 
+## Model Aliases
+
+Model aliases let you expose a single client-facing model name (for example `adv-gpt`) that the gateway resolves at runtime to one or more underlying real models (for example `gpt-5.4-mini`, `gpt-4.1`). Clients keep using the alias even when the underlying model line-up changes — the gateway abstracts away the migration.
+
+The same alias map is honored consistently across **all three LLM endpoints**:
+
+- **Azure OpenAI API** (`/openai/deployments/{alias}/chat/completions`)
+- **Universal LLM API** (`/models/chat/completions` with `"model": "{alias}"`)
+- **Unified AI API** (`/unified-ai/...` — wildcard routes for OpenAI / Inference / Responses / Gemini / Bedrock patterns)
+
+### Configuration
+
+Add a `modelAliases` array to your `.bicepparam` file alongside `llmBackendConfig`:
+
+```bicep
+param modelAliases = [
+  {
+    name: 'adv-gpt'
+    models: [ 'gpt-5.4-mini', 'gpt-4.1' ]
+    strategy: 'priority'
+  }
+  {
+    name: 'fast-gpt'
+    models: [ 'gpt-4.1', 'gpt-5.4-mini' ]
+    strategy: 'weighted'
+    weights: [ 70, 30 ]
+  }
+  {
+    name: 'embeddings-default'
+    models: [ 'text-embedding-3-large' ]
+    strategy: 'priority'
+  }
+]
+```
+
+### Alias Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | string | Yes | Client-facing alias name. Must NOT collide with any real model name in `llmBackendConfig`. |
+| `models` | string[] | Yes | Ordered list of underlying real models the alias may resolve to. Each must exist as a `name` in some backend's `supportedModels`. |
+| `strategy` | string | No | `priority` (default) — first model wins; `weighted` — random selection by weights. |
+| `weights` | int[] | No | Required when `strategy` is `weighted`. Must have the same length as `models`. Higher weight = more traffic. |
+
+### Resolution Strategies
+
+- **`priority`** (default): The first model in `models` is always selected. The other models act as **automatic cross-model fallback** in the Unified AI API — when the chosen model returns 429/5xx and pool-level retries are exhausted, the gateway switches to the next model in the alias list and re-issues the request through the matching backend pool. (Pre-stream only; once streaming starts the response is committed.)
+- **`weighted`**: Each request is routed to a model picked at random with probability proportional to `weights`. Suitable for A/B testing or controlled rollouts of a new model.
+
+### How It Works
+
+1. Client sends `model: "adv-gpt"` (or `/deployments/adv-gpt/...` URL).
+2. The shared `resolve-model-alias` policy fragment sees the alias and replaces `requestedModel` with the resolved real model — also updating the JSON body so backends see the real model name.
+3. For the **Azure OpenAI API**, the API policy's `openAIRewriteTemplate` substitutes the alias segment in the URL path so the backend receives `/deployments/{realModel}/...` instead of `/deployments/{alias}/...`. (URL rewrite is owned by each API policy because APIM's `context.Request.Url.Path` always returns the original request URL — a `<rewrite-uri>` inside `resolve-model-alias` would be silently overridden by the API policy's final rewrite.)
+4. Downstream fragments (`set-target-backend-pool`, `set-backend-authorization`, `set-llm-usage`, `path-builder`) operate on the **resolved** model exactly like a direct model request.
+5. `original-model-alias` and `is-alias` are propagated as variables so usage metrics and `UAIG-*` debug headers can attribute requests back to the alias.
+
+> Direct model selection is **unchanged** — when `requestedModel` does not match any configured alias, the fragment is a no-op and routing falls through to the standard model-to-pool lookup.
+
+### Access Control
+
+The `validate-model-access` fragment runs **before** alias resolution. This means the access contract's `allowedModels` list controls access to the **alias name**, not the underlying models. Granting `allowedModels = "adv-gpt"` lets the client invoke the alias without exposing direct access to `gpt-5.4-mini` or `gpt-4.1` — the alias becomes the contract-level abstraction.
+
+### Discovery (`GET /deployments`)
+
+Aliases also appear in the model discovery responses (`get-available-models` fragment, used by `GET /deployments` and `GET /deployments/{deployment-id}` on the Universal LLM, Azure OpenAI, and Unified AI APIs) **as first-class entries alongside real models**. This means clients (including Microsoft Foundry's deployment picker) can discover and use an alias without the backend implementation leaking out.
+
+Each alias entry returned by discovery looks like:
+
+```json
+{
+  "id": "alias",
+  "type": "alias",
+  "name": "adv-gpt",
+  "sku": { "name": "Standard", "capacity": 100 },
+  "properties": {
+    "model": { "format": "Alias", "name": "adv-gpt", "version": "1" },
+    "capabilities": {
+      "chatCompletion": "true",
+      "description": "Alias for: gpt-5.2, gpt-5.4-mini, gpt-4.1 (strategy: priority)"
+    },
+    "provisioningState": "Succeeded"
+  }
+}
+```
+
+The `description` field under `capabilities` exposes which underlying models the alias maps to and which strategy is in use (with the configured weights when `strategy: weighted`). This makes it possible for tooling to render meaningful "what is this?" labels for an alias without round-tripping to a separate metadata endpoint.
+
+The discovery filter (`allowedModels` from the access contract) matches by `name`, so RBAC works for aliases identically to real models — granting `allowedModels = "adv-gpt"` shows the alias entry in `/deployments` while hiding the underlying real models the client doesn't have separate access to.
+
+### Source of Truth
+
+Aliases are emitted in three places by the same Bicep parameter (`modelAliases`):
+
+| Fragment | Used By | Source |
+|----------|---------|--------|
+| `metadata-config` (cached by `central-cache-manager`) | Unified AI API | `model-aliases` JSON section |
+| `resolve-model-alias` | Azure OpenAI / Universal LLM (always); Unified AI uses it as fallback | Inline static `JObject` in fragment XML |
+| `get-available-models` | All 3 APIs (`GET /deployments`) | Inline `JObject` entry per alias with description |
+
+All three are regenerated on every onboarding deployment, so the views stay in sync.
+
 ## Get Available Models API
 
 The `get-available-models` policy fragment enables an API endpoint that returns all available model deployments with their capabilities, similar to the Azure Cognitive Services deployment list API.
@@ -453,6 +556,7 @@ llm-backend-onboarding/
         ├── frag-set-llm-usage.xml
         ├── frag-get-available-models.xml
         ├── frag-metadata-config.xml          # Unified AI API metadata (always deployed)
+        ├── frag-resolve-model-alias.xml      # Shared alias resolution (Azure OpenAI / Universal LLM / Unified AI)
         ├── universal-llm-api-policy.xml
         ├── universal-llm-openapi.json
         └── models-inference-openapi.json

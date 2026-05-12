@@ -228,6 +228,7 @@ output policyFragments object = {
   getAvailableModels: llmPolicyFragments.outputs.getAvailableModelsFragmentName
   validateModelAccess: llmPolicyFragments.outputs.validateModelAccessFragmentName
   metadataConfig: llmPolicyFragments.outputs.metadataConfigFragmentName
+  resolveModelAlias: llmPolicyFragments.outputs.resolveModelAliasFragmentName
   responsesIdSecurity: llmPolicyFragments.outputs.responsesIdSecurityFragmentName
   responsesIdCacheStore: llmPolicyFragments.outputs.responsesIdCacheStoreFragmentName
 }
