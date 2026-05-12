@@ -12,9 +12,10 @@ The recommended execution order is:
 2. **Universal LLM API — All-Models Tests** — Validate every gateway-configured model (chat / embeddings / Responses API) through `/models` ⭐ *strongly recommended*
 3. **Access Contracts** — Create per-team access contracts with Key Vault and Foundry integrations ⭐ *strongly recommended*
 4. **Agent Frameworks** — Validate agent-based consumption of provisioned contracts (Microsoft Agent Framework, Foundry Agent SDK, LangChain) ⭐ *strongly recommended*
-5. **PII Processing** — Test PII anonymization, deanonymization, and blocking policies
-6. **Unified AI API** — Test multi-provider routing patterns through the Unified AI Wildcard API
-7. **JWT Authentication** — Validate JWT-enforced and role-based access control across all API endpoints
+5. **Model Aliases** — Validate the shared `resolve-model-alias` policy fragment across all 3 LLM APIs (priority + weighted strategies, RBAC, discovery)
+6. **PII Processing** — Test PII anonymization, deanonymization, and blocking policies
+7. **Unified AI API** — Test multi-provider routing patterns through the Unified AI Wildcard API
+8. **JWT Authentication** — Validate JWT-enforced and role-based access control across all API endpoints
 
 Each notebook is self-contained with initialization, deployment, testing, visualization, and cleanup stages, enabling both interactive exploration and repeatable CI/CD validation.
 
@@ -37,15 +38,85 @@ Before running any notebook, ensure the following are in place:
 
 | Capability | Required By | Details |
 |---|---|---|
-| Universal LLM API (`models`) imported in APIM | Universal LLM All-Models Tests | Required for `/models` discovery and per-model operation tests |
+| Universal LLM API (`models`) imported in APIM | Universal LLM All-Models Tests, Model Aliases | Required for `/models` discovery and per-model operation tests |
 | Azure Key Vault | Access Contracts, Agent Frameworks | A Key Vault with secrets for LLM endpoint and API key |
 | Azure AI Foundry | Access Contracts, Agent Frameworks | A Foundry account and project for connection integration |
 | Azure AI Language Service | PII Processing | PII detection endpoint with managed identity access |
 | Event Hub | PII Processing | For PII state saving and audit logging |
-| Unified AI API (`unified-ai`) imported in APIM | Unified AI API | Required for the wildcard `/unified-ai/**` routing patterns |
+| Unified AI API (`unified-ai`) imported in APIM | Unified AI API, Model Aliases (full coverage) | Required for the wildcard `/unified-ai/**` routing patterns |
+| `resolve-model-alias` policy fragment + alias-aware backend onboarding | Model Aliases | Re-deployed by the notebook itself via the LLM backend onboarding Bicep with `modelAliases` populated |
 | Entra ID App Registration | JWT Authentication | Client credentials (client ID + secret) with app roles configured |
 | MSAL Library | JWT Authentication | Optional — for interactive device code flow token acquisition |
 | Google Gemini API | Unified AI API | Optional — for testing Gemini routing pattern |
+
+---
+
+## Initializing Variables from `azd` Environment
+
+Every validation notebook supports a one-line **`init_from_azd = True`** toggle in its first code cell that auto-populates Citadel Governance Hub variables (resource group, location, Key Vault name, LLM backend config, Foundry account/project, Entra IDs, Cosmos account, …) directly from your active `azd` environment.
+
+This is the recommended path when the accelerator was deployed with `azd up`, because the relevant deployment outputs (`AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`, `LLM_BACKEND_CONFIG`, `KEY_VAULT_NAME`, `AI_FOUNDRY_SERVICES`, `ENTRA_*`, `COSMOS_DB_ACCOUNT_NAME`, …) are already written to the active `azd` env file by the Bicep deployment.
+
+### How It Works
+
+Each notebook's init cell follows the same pattern:
+
+```python
+init_from_azd = True   # Set False to fill REPLACE values manually below
+
+# Manual fallbacks (used when azd env var is missing OR init_from_azd = False)
+governance_hub_resource_group = "REPLACE"
+location                      = "REPLACE"
+# ... other notebook-specific REPLACE values ...
+
+if init_from_azd:
+    loaded = utils.load_azd_env({
+        "resource_group": ["AZURE_RESOURCE_GROUP", "GOVERNANCE_HUB_RESOURCE_GROUP"],
+        "location":       ["AZURE_LOCATION", "LOCATION"],
+        # ... notebook-specific azd vars ...
+    }, verbose=False)
+    # Manually-set values (anything not equal to the REPLACE sentinel) win over azd values.
+```
+
+The shared helper [`utils.load_azd_env`](../shared/utils.py) in [`shared/utils.py`](../shared/utils.py) wraps `azd env get-value <NAME>` per variable, supports fallback name lists, and JSON-decodes complex values (`LLM_BACKEND_CONFIG`, `AI_FOUNDRY_SERVICES`).
+
+### Pre-flight
+
+```pwsh
+# Make sure the right azd environment is selected
+azd env list
+azd env select <env-name>
+
+# (Optional) inspect what will be auto-loaded
+azd env get-values
+```
+
+> **Important:** Manually edited values (anything not equal to the `"REPLACE"` sentinel string in the init cell) **always win** over values pulled from `azd`. Set `init_from_azd = False` to disable the lookup entirely and force purely manual configuration.
+
+### Per-Notebook Variable Map
+
+The table below summarizes which `azd` env variables each notebook auto-loads when `init_from_azd = True`. Variables in *italics* are optional / only used when the notebook actually exercises the corresponding integration.
+
+| Notebook | `azd` env variables auto-loaded → notebook variables |
+|---|---|
+| `llm-backend-onboarding-runner` | `AZURE_RESOURCE_GROUP` → `governance_hub_resource_group`<br>`AZURE_LOCATION` → `location`<br>`LLM_BACKEND_CONFIG` (JSON) → `llm_backends_config`<br>*`KEY_VAULT_NAME` → `key_vault_name`* |
+| `citadel-universal-llm-api-all-models-tests` | `AZURE_RESOURCE_GROUP` → `governance_hub_resource_group`<br>`AZURE_LOCATION` → `location` |
+| `citadel-access-contracts-tests` | `AZURE_RESOURCE_GROUP` → `governance_hub_resource_group`<br>`AZURE_LOCATION` → `location`<br>`AZURE_SUBSCRIPTION_ID` → `keyvault_subscription_id` / `foundry_subscription_id`<br>*`KEY_VAULT_NAME` → `keyvault_name`*<br>*`AI_FOUNDRY_SERVICES[0]` (JSON) → `foundry_account_name` + `foundry_project_name`* |
+| `citadel-agent-frameworks-tests` | Same as `citadel-access-contracts-tests` |
+| `citadel-model-aliases-tests` | `AZURE_RESOURCE_GROUP` → `governance_hub_resource_group`<br>`AZURE_LOCATION` → `location`<br>`LLM_BACKEND_CONFIG` (JSON) → `llm_backends_config` |
+| `citadel-pii-processing-tests` | `AZURE_RESOURCE_GROUP` → `governance_hub_resource_group`<br>`AZURE_LOCATION` → `location`<br>*`COSMOS_DB_ACCOUNT_NAME` → `cosmos_account_endpoint`* |
+| `citadel-unified-ai-api-tests` | `AZURE_RESOURCE_GROUP` → `governance_hub_resource_group`<br>`AZURE_LOCATION` → `location` |
+| `citadel-jwt-authentication-tests` | `AZURE_RESOURCE_GROUP` → `governance_hub_resource_group`<br>`AZURE_LOCATION` → `location`<br>`AZURE_SUBSCRIPTION_ID` → `keyvault_subscription_id` / `foundry_subscription_id`<br>`ENTRA_TENANT_ID` → `entra_tenant_id`<br>`ENTRA_CLIENT_ID` → `entra_client_id`<br>`ENTRA_AUDIENCE` → `entra_audience` (defaults to `api://<client_id>` if missing)<br>*`KEY_VAULT_NAME` → `keyvault_name`*<br>*`AI_FOUNDRY_SERVICES[0]` (JSON) → `foundry_account_name` + `foundry_project_name`*<br>**Note:** `entra_client_secret` is intentionally **not** auto-loaded — set it manually before running JWT tests. |
+
+> **Multi-environment teams:** Run `azd env select <env-name>` before launching the notebook to switch which deployment the notebook talks to. Each `.azure/<env-name>/.env` file is fully self-contained.
+
+### When to Set `init_from_azd = False`
+
+- You are validating a Citadel Governance Hub that was **not** deployed via `azd` (e.g. deployed via `az deployment sub create` directly, or via a CI/CD pipeline that doesn't write azd env vars).
+- You want to point a notebook at a **different** environment than the currently selected `azd` env.
+- You are running the notebook on a workstation where `azd` is not installed.
+
+In any of these cases, set `init_from_azd = False` and fill the `REPLACE` values manually. The shared helpers (`utils.azd_env_get`, `utils.azd_env_get_json`, `utils.load_azd_env`) will silently no-op when `azd` isn't available, so leaving `init_from_azd = True` on a machine without `azd` is also harmless — it just won't override your manual values.
 
 ---
 
@@ -293,7 +364,87 @@ support_model_name = "phi-4"
 
 ---
 
-### 5. Citadel PII Processing Tests
+### 5. Citadel Model Aliases Tests
+
+| | |
+|---|---|
+| **Notebook** | [`citadel-model-aliases-tests.ipynb`](citadel-model-aliases-tests.ipynb) |
+| **Purpose** | Validate the shared `resolve-model-alias` policy fragment across Universal LLM, Azure OpenAI, and Unified AI APIs |
+| **Run this** | After backend onboarding (notebook 1). Can be run independently of notebooks 3–4. |
+
+#### What It Does
+
+This notebook re-runs the LLM backend onboarding Bicep with a `modelAliases` parameter populated, which (re)deploys the shared `resolve-model-alias` policy fragment with the configured aliases inlined. It then provisions an access contract scoped to **alias names only** (least-privilege RBAC) and exercises the same aliases through all 3 LLM API surfaces, inspecting the `UAIG-*` debug response headers to verify the gateway's routing decisions end-to-end.
+
+Two alias strategies are validated:
+
+| Alias | Strategy | Behavior |
+|---|---|---|
+| `adv-gpt` | `priority` | First underlying model wins; remaining models act as cross-model fallback (deterministic per-call) |
+| `gpt-blend` | `weighted` | Random-weighted picking across underlying models — useful for A/B model swaps |
+
+#### Steps
+
+| Step | Description |
+|---|---|
+| 0 | **Initialize variables** — Auto-load from `azd` env (`LLM_BACKEND_CONFIG`) or fill manually; define the two aliases and a direct-test model |
+| 1 | **Verify Azure CLI & APIM Client** — Confirm subscription context and discover the APIM resource + managed identity |
+| 2 | **Generate `.bicepparam`** — Write `llm-backends-aliases-validation.bicepparam` containing the full backend config + the two aliases |
+| 3 | **Deploy onboarding** — Re-run the LLM backend onboarding Bicep so the `resolve-model-alias` fragment is regenerated with the aliases inlined |
+| 4 | **Create access contract** — Deploy an APIM product whose `allowedModels` lists ONLY the alias names + `direct_test_model`, with `enableResponseHeaders=true` for `UAIG-*` debug headers |
+| 5 | **Resolve API key** — Pick the subscription created for the contract |
+| 6 | **Discover endpoints** — Universal LLM (`/models`), Azure OpenAI (`/openai`), Unified AI (`/unified-ai`) |
+| Discovery | **`GET /deployments` honors `allowedModels`** — Aliases appear as `type: "alias"` entries with descriptions; underlying real models that aren't in `allowedModels` are filtered out |
+| 7 | **Direct model control test** — Call `direct_test_model` on all 3 APIs; resolver should be a no-op (no `UAIG-Alias` header) |
+| 8 | **Priority alias test** — Call `adv-gpt` on all 3 APIs; resolves deterministically to the first underlying model |
+| 9 | **Weighted alias single call** — Call `gpt-blend` once on each API |
+| 10 | **Weighted distribution test** — Send N=30 requests through `gpt-blend` and tally `UAIG-Resolved-Model` against configured weights |
+| 11 | **Negative RBAC test** — Send a model NOT in `allowedModels`; expect HTTP 403 `unauthorized_model_access` |
+| Summary | **Results overview** — Cross-API consistency check + alias resolution observations |
+| Cleanup | **Delete access contract** — `do_cleanup` flag (default `False`); LLM backends and the `resolve-model-alias` fragment are intentionally preserved |
+
+#### `UAIG-*` Response Headers Inspected
+
+| Header | Meaning |
+|---|---|
+| `UAIG-Model-Id` | Model that was actually routed to (post alias resolution) |
+| `UAIG-Alias` | Original alias name the client sent (only present when alias was used) |
+| `UAIG-Resolved-Model` | Real model the alias resolved to |
+| `UAIG-Backend` | Backend pool / backend that served the request |
+| `UAIG-API-Type` | Detected API type (Unified AI only) |
+| `UAIG-Final-Path` | Reconstructed backend path (Unified AI only) |
+| `UAIG-Auth-Type` | Auth method enforced by `security-handler` (Unified AI only) |
+| `UAIG-Cache-Operation` | `cache-hit` / `cache-miss` for `metadata-config` |
+| `UAIG-Request-Id` | APIM request id for log correlation |
+
+#### Key Configuration
+
+```python
+governance_hub_resource_group = "REPLACE"   # or auto-loaded from azd
+location                      = "REPLACE"
+llm_backends_config           = []          # auto-loaded from LLM_BACKEND_CONFIG when init_from_azd=True
+
+model_aliases = [
+    { "name": "adv-gpt",   "models": ["gpt-5.2", "gpt-5.4-mini", "gpt-4.1"], "strategy": "priority" },
+    { "name": "gpt-blend", "models": ["gpt-5.4-mini", "gpt-4.1"],            "strategy": "weighted", "weights": [70, 30] },
+]
+
+direct_test_model     = "gpt-4.1"            # control test (must exist in llm_backends_config)
+inference_api_version = "2024-05-01-preview"
+```
+
+#### Output
+
+- Re-deployed `resolve-model-alias` policy fragment with the two aliases inlined as a static `JObject`
+- Access contract scoped to alias names (proves alias-name RBAC works without exposing underlying real models)
+- Per-API report of `UAIG-*` headers showing alias → real-model resolution
+- Distribution table for the weighted alias compared against the configured weights
+- Filtered `GET /deployments` response showing aliases as first-class entries with `properties.capabilities.description`
+- 403 negative-test confirmation that unauthorized models are blocked at the gateway
+
+---
+
+### 6. Citadel PII Processing Tests
 
 | | |
 |---|---|
@@ -362,7 +513,7 @@ location = "REPLACE"
 
 ---
 
-### 6. Citadel Unified AI API Tests
+### 7. Citadel Unified AI API Tests
 
 | | |
 |---|---|
@@ -429,7 +580,7 @@ test_duration = 30   # Seconds
 
 ---
 
-### 7. Citadel JWT Authentication Tests
+### 8. Citadel JWT Authentication Tests
 
 | | |
 |---|---|
@@ -506,7 +657,7 @@ requiredRoles = "Models.Read"
 
 ## Recommended Execution Order
 
-> **Strongly recommended baseline:** run notebooks **1 → 4** in order on every new Citadel Governance Hub deployment. Steps **5 → 7** are optional, scenario-specific validations that can be run independently afterwards.
+> **Strongly recommended baseline:** run notebooks **1 → 4** in order on every new Citadel Governance Hub deployment. Steps **5 → 8** are optional, scenario-specific validations that can be run independently afterwards.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -532,21 +683,27 @@ requiredRoles = "Models.Read"
                │   ── End of strongly recommended baseline ──
                ▼
 ┌──────────────────────────────────────────────┐
-│  5. citadel-pii-processing-tests             │  Optional: PII masking & blocking
+│  5. citadel-model-aliases-tests              │  Optional: alias routing
+│                                              │     (priority + weighted strategies)
 └──────────────┬───────────────────────────────┘
                │
                ▼
 ┌──────────────────────────────────────────────┐
-│  6. citadel-unified-ai-api-tests             │  Optional: Unified AI wildcard API
+│  6. citadel-pii-processing-tests             │  Optional: PII masking & blocking
 └──────────────┬───────────────────────────────┘
                │
                ▼
 ┌──────────────────────────────────────────────┐
-│  7. citadel-jwt-authentication-tests         │  Optional: JWT auth & RBAC
+│  7. citadel-unified-ai-api-tests             │  Optional: Unified AI wildcard API
+└──────────────┬───────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────┐
+│  8. citadel-jwt-authentication-tests         │  Optional: JWT auth & RBAC
 └──────────────────────────────────────────────┘
 ```
 
-> **Note:** Notebooks 5–7 create their own access contracts and can be run independently after backend onboarding. However, notebook 5 requires PII policy fragments (`pii-anonymization`, `pii-deanonymization`, `pii-state-saving`), notebook 6 requires the Unified AI API (`unified-ai`) to be imported into APIM, and notebook 7 requires JWT configuration plus an Entra ID app registration.
+> **Note:** Notebooks 5–8 create their own access contracts and can be run independently after backend onboarding. Notebook 5 re-deploys the LLM backend onboarding Bicep with `modelAliases` populated (the `resolve-model-alias` fragment is regenerated; full cross-API coverage requires the Unified AI API to be imported), notebook 6 requires PII policy fragments (`pii-anonymization`, `pii-deanonymization`, `pii-state-saving`), notebook 7 requires the Unified AI API (`unified-ai`) to be imported into APIM, and notebook 8 requires JWT configuration plus an Entra ID app registration.
 
 ## Shared Utilities
 
