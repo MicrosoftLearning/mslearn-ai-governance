@@ -500,6 +500,8 @@ When a required role is missing, the policy returns:
 
 AI Citadel Gateway supports PII processing using built-in policy fragments that leverage Azure AI Language Service for detection and anonymization. This allows you to protect sensitive data when sending requests to LLM backends.
 
+>**NOTE:** PII processing has a limit of **5,120** characters for the payload being analyzed by Azure Language service. If the content exceeds this limit, gateway may return a `400 Bad Request` error. To handle this, you can implement a custom policy to split the input content into smaller chunks before passing it to the PII processing fragments.
+
 #### Available PII Policy Fragments
 
 | Fragment | Purpose | Description |
