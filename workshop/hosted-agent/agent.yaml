@@ -11,5 +11,7 @@ environment_variables:
     value: Hub-HR-ChatAgent-DEV-LLM/gpt-4.1
   - name: ENABLE_INSTRUMENTATION
     value: "true"
+  - name: ENABLE_SENSITIVE_DATA
+    value: "true"
   - name: OTEL_SERVICE_NAME
     value: citadel-time-weather-agent
