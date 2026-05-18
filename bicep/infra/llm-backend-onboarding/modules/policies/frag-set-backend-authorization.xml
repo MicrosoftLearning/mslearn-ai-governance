@@ -226,14 +226,47 @@
         <when condition="@(context.Variables.GetValueOrDefault<string>("targetPoolType", "") == "azure-openai")">
             <set-variable name="rewriteTemplate" value="@{
                 string requestedModel = (string)context.Variables["requestedModel"];
+                // APIM's context.Request.Url.Path returns the ORIGINAL request path,
+                // which includes the API path prefix (e.g. 'models/...' for Universal LLM API,
+                // 'openai/...' for Azure OpenAI API). Strip the API prefix before prepending
+                // the backend prefix so the rewritten URL doesn't double up the segment
+                // (e.g. 'openai/openai/deployments/.../chat/completions' or 'models/models/...').
+                string apiPath = (context.Api.Path ?? "").Trim('/');
                 string path = context.Request.Url.Path.TrimStart('/');
+                if (!string.IsNullOrEmpty(apiPath))
+                {
+                    if (path.StartsWith(apiPath + "/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        path = path.Substring(apiPath.Length + 1);
+                    }
+                    else if (path.Equals(apiPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        path = "";
+                    }
+                }
                 return string.Format("openai/deployments/{0}/{1}", requestedModel, path);
             }" />
             <rewrite-uri template="@((string)context.Variables["rewriteTemplate"])" copy-unmatched-params="true" />
         </when>
         <when condition="@(context.Variables.GetValueOrDefault<string>("targetPoolType", "") == "ai-foundry")">
             <set-variable name="rewriteTemplate" value="@{
+                // APIM's context.Request.Url.Path returns the ORIGINAL request path,
+                // which includes the API path prefix (e.g. 'models/...' for Universal LLM API).
+                // Strip the API prefix before prepending the backend prefix so the rewritten URL
+                // doesn't double up the segment (e.g. 'models/models/chat/completions').
+                string apiPath = (context.Api.Path ?? "").Trim('/');
                 string path = context.Request.Url.Path.TrimStart('/');
+                if (!string.IsNullOrEmpty(apiPath))
+                {
+                    if (path.StartsWith(apiPath + "/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        path = path.Substring(apiPath.Length + 1);
+                    }
+                    else if (path.Equals(apiPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        path = "";
+                    }
+                }
                 string lowerPath = path.ToLowerInvariant();
 
                 // If path contains "responses", use /openai/v1/{path}
