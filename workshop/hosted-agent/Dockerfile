@@ -1,10 +1,16 @@
 FROM python:3.13-slim
 
+# Install uv from the official distroless image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV UV_SYSTEM_PYTHON=1     UV_COMPILE_BYTECODE=1     UV_LINK_MODE=copy
+
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache --prerelease=allow -r requirements.txt
 
 COPY main.py .
+COPY policies/ ./policies/
 
 EXPOSE 8088
 

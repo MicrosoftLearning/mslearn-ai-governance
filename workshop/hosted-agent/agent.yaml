@@ -1,5 +1,5 @@
 kind: hosted
-name: citadel-time-weather-agent
+name: citadel-hr-agent
 protocols:
   - protocol: responses
     version: 1.0.0
@@ -14,4 +14,4 @@ environment_variables:
   - name: ENABLE_SENSITIVE_DATA
     value: "true"
   - name: OTEL_SERVICE_NAME
-    value: citadel-time-weather-agent
+    value: citadel-hr-agent

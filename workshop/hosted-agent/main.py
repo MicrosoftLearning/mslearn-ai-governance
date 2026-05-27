@@ -1,44 +1,183 @@
+import logging
 import os
+from datetime import date, datetime, timedelta, timezone as tz
 from typing import Annotated
-from datetime import datetime, timezone as tz
 
-from pydantic import Field
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
+from opentelemetry import trace
+from pydantic import Field
 
-
-@tool(approval_mode="never_require")
-def get_current_time(
-    timezone: Annotated[str, Field(description="IANA timezone name, e.g. 'America/New_York', 'Europe/London', 'Asia/Tokyo'")]
-) -> str:
-    """Get the current date and time for a given timezone."""
-    import zoneinfo
-    try:
-        zone = zoneinfo.ZoneInfo(timezone)
-        now = datetime.now(zone)
-        return f"Current time in {timezone}: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}"
-    except Exception as e:
-        return f"Could not get time for timezone '{timezone}': {e}"
-
+# ---------------------------------------------------------------------------
+# HR tools (all dummy / deterministic — no external systems).
+# ---------------------------------------------------------------------------
 
 @tool(approval_mode="never_require")
-def get_weather(
-    location: Annotated[str, Field(description="City name, e.g. 'Seattle', 'London', 'Tokyo'")]
+def get_pto_balance(
+    employee_id: Annotated[str, Field(description="Employee ID, e.g. 'E12345'")]
 ) -> str:
-    """Get the current weather for a given location (simulated)."""
+    """Get the remaining PTO balance, days used this year, and accrual rate for an employee."""
     import hashlib
-    # Deterministic but varied simulated weather based on location + date
-    seed = hashlib.md5(f"{location}{datetime.now(tz.utc).strftime('%Y-%m-%d')}".encode()).hexdigest()
-    conditions = ["sunny", "partly cloudy", "cloudy", "rainy", "windy", "snowy"]
-    condition = conditions[int(seed[:2], 16) % len(conditions)]
-    temp_c = 5 + (int(seed[2:4], 16) % 30)
-    humidity = 30 + (int(seed[4:6], 16) % 50)
-    return f"Weather in {location}: {condition}, {temp_c} deg C, humidity {humidity}%"
+    seed = int(hashlib.md5(employee_id.encode()).hexdigest()[:6], 16)
+    accrued = 20 + (seed % 6)           # 20-25 days/yr
+    used = seed % accrued
+    remaining = accrued - used
+    return (
+        f"PTO for employee {employee_id}: {remaining} days remaining "
+        f"({used} used / {accrued} accrued this year, accrual rate "
+        f"{accrued/12:.2f} days/month)."
+    )
 
 
-def main():
+@tool(approval_mode="never_require")
+def get_holiday_schedule(
+    country: Annotated[str, Field(description="ISO country code: 'US', 'UK', or 'JP'")]
+) -> str:
+    """Get the next 3 upcoming Contoso company holidays for a country."""
+    today = date.today()
+    catalog = {
+        "US": [("Memorial Day", (5, 27)), ("Independence Day", (7, 4)),
+               ("Labor Day", (9, 2)), ("Thanksgiving", (11, 28)),
+               ("Christmas Day", (12, 25))],
+        "UK": [("Spring Bank Holiday", (5, 27)), ("Summer Bank Holiday", (8, 26)),
+               ("Christmas Day", (12, 25)), ("Boxing Day", (12, 26))],
+        "JP": [("Showa Day", (4, 29)), ("Greenery Day", (5, 4)),
+               ("Marine Day", (7, 15)), ("Mountain Day", (8, 11)),
+               ("Culture Day", (11, 3))],
+    }
+    code = country.upper()
+    if code not in catalog:
+        return f"No holiday schedule configured for country '{country}'. Supported: US, UK, JP."
+    upcoming = []
+    for name, (m, d) in catalog[code]:
+        candidate = date(today.year, m, d)
+        if candidate < today:
+            candidate = date(today.year + 1, m, d)
+        upcoming.append((candidate, name))
+    upcoming.sort()
+    top3 = ", ".join(f"{name} ({d.isoformat()})" for d, name in upcoming[:3])
+    return f"Next 3 Contoso holidays in {code}: {top3}."
+
+
+@tool(approval_mode="never_require")
+def get_benefits_summary(
+    plan_type: Annotated[str, Field(description="One of: 'medical', 'dental', 'vision', '401k'")]
+) -> str:
+    """Get a high-level summary of a Contoso benefits plan."""
+    summaries = {
+        "medical":  "Medical (Contoso PPO): $250 deductible, $20 PCP copay, 90% in-network coinsurance, $3,000 OOP max.",
+        "dental":   "Dental (Contoso Premier): 100% preventive, 80% basic, 50% major; $2,000 annual maximum.",
+        "vision":   "Vision (Contoso View): annual eye exam $0, $200 frames allowance every 12 months.",
+        "401k":     "401(k): Contoso matches 100% of the first 6% of eligible pay; immediate vesting; Roth + traditional options.",
+    }
+    key = plan_type.lower()
+    if key not in summaries:
+        return f"Unknown plan '{plan_type}'. Supported: medical, dental, vision, 401k."
+    return summaries[key]
+
+
+@tool(approval_mode="never_require")
+def get_open_enrollment_window() -> str:
+    """Get the current open enrollment window dates for Contoso benefits."""
+    today = date.today()
+    start = date(today.year, 11, 1)
+    end = date(today.year, 11, 21)
+    if today > end:
+        start = date(today.year + 1, 11, 1)
+        end = date(today.year + 1, 11, 21)
+    days = (start - today).days
+    when = "currently open" if start <= today <= end else f"opens in {days} days"
+    return f"Contoso open enrollment: {start.isoformat()} → {end.isoformat()} ({when})."
+
+
+@tool(approval_mode="never_require")
+def delete_user(
+    user_id: Annotated[str, Field(description="Employee/user ID to delete, e.g. 'E12345'")]
+) -> str:
+    """Simulate deleting a Contoso HR user account."""
+    return f"SIMULATION ONLY: user {user_id} would be deleted."
+
+
+# ---------------------------------------------------------------------------
+# AGT → OpenTelemetry bridge.
+# Forwards records from agent_os / agentmesh / agent_sre loggers into the
+# same OTEL tracer that the hosted-agent platform already wires up to
+# Application Insights, so policy/audit/rogue events show up as spans
+# alongside GenAI spans.
+# ---------------------------------------------------------------------------
+
+_AGT_LOGGER_NAMES = ("agent_os", "agentmesh", "agent_sre")
+_AGT_STRUCTURED_FIELDS = (
+    "event_type", "agent_did", "action", "outcome",
+    "policy_decision", "resource",
+)
+
+
+class _AGTOtelBridge(logging.Handler):
+    """Emits a short OTEL span for every AGT log record."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self._tracer = trace.get_tracer("agt.audit")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            attrs = {
+                "agt.logger": record.name,
+                "agt.level": record.levelname,
+                "agt.message": record.getMessage()[:500],
+            }
+            for field in _AGT_STRUCTURED_FIELDS:
+                value = getattr(record, field, None)
+                if value is not None:
+                    attrs[f"agt.{field}"] = str(value)
+            span_name = f"agt.{getattr(record, 'event_type', None) or record.name}"
+            with self._tracer.start_as_current_span(span_name, attributes=attrs):
+                pass
+        except Exception:
+            # Telemetry must never break the request path.
+            pass
+
+
+def _install_agt_otel_bridge() -> None:
+    handler = _AGTOtelBridge()
+    for name in _AGT_LOGGER_NAMES:
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.INFO)
+        # Avoid duplicate handlers across hot reloads.
+        if not any(isinstance(h, _AGTOtelBridge) for h in lg.handlers):
+            lg.addHandler(handler)
+
+
+# ---------------------------------------------------------------------------
+# Main entrypoint.
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    _install_agt_otel_bridge()
+
+    # AGT MAF adapter — built lazily so import errors surface clearly at boot.
+    from agent_os.integrations.maf_adapter import create_governance_middleware
+
+    tools = [
+        get_pto_balance,
+        get_holiday_schedule,
+        get_benefits_summary,
+        get_open_enrollment_window,
+        delete_user,
+    ]
+    allowed_tool_names = [t.name if hasattr(t, "name") else t.__name__ for t in tools]
+
+    agent_name_env = os.environ.get("OTEL_SERVICE_NAME", "citadel-hr-agent")
+    governance = create_governance_middleware(
+        policy_directory="policies",
+        allowed_tools=allowed_tool_names,
+        agent_id=agent_name_env,
+        enable_rogue_detection=True,
+    )
+
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
@@ -47,15 +186,18 @@ def main():
 
     agent = Agent(
         client=client,
+        name=agent_name_env,
         instructions=(
-            "You are a helpful assistant that provides current time and weather information. "
-            "Use the get_current_time tool for time queries and get_weather tool for weather queries. "
-            "Be concise and friendly in your responses."
+            "You are Contoso HR Assistant, a friendly internal HR helper. "
+            "Use the provided tools to answer questions about an employee's own PTO balance, "
+            "Contoso company holidays, benefits plans (medical/dental/vision/401k), and the "
+            "open enrollment window. The delete_user tool exists only to demonstrate governance "
+            "for explicit user deletion requests. Never disclose another employee's personal data "
+            "(salary, SSN, compensation). Be concise."
         ),
-        tools=[get_current_time, get_weather],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
+        tools=tools,
+        middleware=governance,
+        # History is managed by the hosting infrastructure.
         default_options={"store": False},
     )
 
