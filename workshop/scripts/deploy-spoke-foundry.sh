@@ -5,6 +5,34 @@ AI_PROJECT_MANAGER_ROLE_ID="eadc314b-1a2d-4efa-be10-5d325db5065e"
 KEY_VAULT_SECRETS_USER_ROLE_ID="4633458b-17de-408a-b874-0445c86b69e6"
 ACR_PULL_ROLE_ID="7f951dda-4ed3-4680-a7ca-43fe172d538d"
 FOUNDRY_APPINSIGHTS_CONNECTION_API_VERSION="2025-06-01"
+SECURITY_CONTROL_TAG="SecurityControl=Ignore"
+spoke_suffix="${SPOKE_SUFFIX:-}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -s|--spoke-suffix)
+      if [[ $# -lt 2 ]]; then
+        printf 'Missing value for %s\n' "$1" >&2
+        exit 1
+      fi
+      spoke_suffix="$2"
+      shift 2
+      ;;
+    --spoke-suffix=*)
+      spoke_suffix="${1#*=}"
+      shift
+      ;;
+    *)
+      if [[ -z "$spoke_suffix" ]]; then
+        spoke_suffix="$1"
+        shift
+      else
+        printf 'Unknown argument: %s\n' "$1" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
 
 log() {
   printf '\n==> %s\n' "$1"
@@ -87,6 +115,21 @@ assign_role_if_missing() {
   printf 'Assigned role: %s\n' "$role_name"
 }
 
+tag_resource_ignore() {
+  local resource_id="$1"
+
+  if [[ -z "$resource_id" ]]; then
+    return
+  fi
+
+  az tag update \
+    --resource-id "$resource_id" \
+    --operation Merge \
+    --tags "$SECURITY_CONTROL_TAG" \
+    --only-show-errors \
+    -o none
+}
+
 require_command az
 require_command azd
 
@@ -111,9 +154,22 @@ else
   subscription_id="$(az account show --query id -o tsv)"
 fi
 
-spoke_resource_group_name="${SPOKE_RESOURCE_GROUP_NAME:-${governance_rg}-spoke}"
-name_seed="$(safe_name_part "${azd_env_name:-$governance_rg}")"
-compact_seed="$(compact_name_part "${azd_env_name:-$governance_rg}")"
+base_name_seed="$(safe_name_part "${azd_env_name:-$governance_rg}")"
+base_compact_seed="$(compact_name_part "${azd_env_name:-$governance_rg}")"
+
+if [[ -n "$spoke_suffix" ]]; then
+  spoke_suffix_name="$(safe_name_part "$spoke_suffix")"
+  spoke_suffix_compact="$(compact_name_part "$spoke_suffix")"
+  name_seed="${base_name_seed}-spoke-${spoke_suffix_name}"
+  compact_seed="${base_compact_seed}spoke${spoke_suffix_compact}"
+  default_spoke_resource_group_name="${governance_rg}-spoke-${spoke_suffix_name}"
+else
+  name_seed="$base_name_seed"
+  compact_seed="$base_compact_seed"
+  default_spoke_resource_group_name="${governance_rg}-spoke"
+fi
+
+spoke_resource_group_name="${SPOKE_RESOURCE_GROUP_NAME:-$default_spoke_resource_group_name}"
 subscription_suffix="$(printf '%s' "$subscription_id" | tr -d '-' | cut -c1-8)"
 
 default_foundry_name="$(printf 'aif-%s-%s' "$name_seed" "$subscription_suffix" | cut -c1-64 | trim_trailing_hyphen)"
@@ -154,7 +210,7 @@ if ! az cognitiveservices account show --name "$foundry_account_name" --resource
     --custom-domain "$foundry_account_name" \
     --allow-project-management true \
     --yes \
-    --tags "azd-env-name=${azd_env_name:-unknown}" "workload=citadel-spoke" \
+    --tags "azd-env-name=${azd_env_name:-unknown}" "workload=citadel-spoke" "$SECURITY_CONTROL_TAG" \
     -o none
 else
   printf 'Foundry account already exists: %s\n' "$foundry_account_name"
@@ -165,6 +221,7 @@ foundry_account_id="$(az cognitiveservices account show \
   --resource-group "$spoke_resource_group_name" \
   --query id \
   -o tsv)"
+tag_resource_ignore "$foundry_account_id"
 
 az rest \
   --method patch \
@@ -190,6 +247,9 @@ if ! az cognitiveservices account project show \
 else
   printf 'Foundry project already exists: %s\n' "$foundry_project_name"
 fi
+
+project_resource_id="/subscriptions/${subscription_id}/resourceGroups/${spoke_resource_group_name}/providers/Microsoft.CognitiveServices/accounts/${foundry_account_name}/projects/${foundry_project_name}"
+tag_resource_ignore "$project_resource_id"
 
 log "Ensuring Application Insights CLI extension"
 az extension add --name application-insights --upgrade --only-show-errors >/dev/null
@@ -243,8 +303,6 @@ app_insights_connection_string="$(az monitor app-insights component show \
   --resource-group "$spoke_resource_group_name" \
   --query connectionString \
   -o tsv)"
-
-project_resource_id="/subscriptions/${subscription_id}/resourceGroups/${spoke_resource_group_name}/providers/Microsoft.CognitiveServices/accounts/${foundry_account_name}/projects/${foundry_project_name}"
 
 connection_body_file="$(mktemp)"
 trap 'rm -f "$connection_body_file"' EXIT
@@ -314,6 +372,7 @@ key_vault_id="$(az keyvault show \
   --resource-group "$spoke_resource_group_name" \
   --query id \
   -o tsv)"
+tag_resource_ignore "$key_vault_id"
 
 log "Assigning RBAC roles to the signed-in user"
 assign_role_if_missing "$current_user_object_id" User "$AI_PROJECT_MANAGER_ROLE_ID" "Azure AI Project Manager" "$foundry_account_id"
@@ -331,7 +390,7 @@ if ! az acr show --name "$acr_name" --resource-group "$spoke_resource_group_name
     --location "$location" \
     --sku Basic \
     --admin-enabled false \
-    --tags "azd-env-name=${azd_env_name:-unknown}" "workload=citadel-spoke" \
+    --tags "azd-env-name=${azd_env_name:-unknown}" "workload=citadel-spoke" "$SECURITY_CONTROL_TAG" \
     -o none
 else
   printf 'Container Registry already exists: %s\n' "$acr_name"

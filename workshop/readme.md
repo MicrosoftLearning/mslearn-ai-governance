@@ -243,19 +243,33 @@ azd env get-values
 
 ### 3.7 Deploy the Sample Spoke
 
-After `azd up` finishes, run the spoke deployment script from the `workshop` folder.
+After `azd up` finishes, run the spoke deployment script from the repository root. Pass a unique spoke suffix so the script creates a distinct spoke resource group and unique resource names for the Foundry account, Key Vault, Log Analytics workspace, Application Insights, and Azure Container Registry.
 
 **PowerShell:**
 ```powershell
-.\workshop\scripts\deploy-spoke-foundry.ps1
+.\workshop\scripts\deploy-spoke-foundry.ps1 -SpokeSuffix 1
 ```
 
 **Bash:**
 ```bash
-./workshop/scripts/deploy-spoke-foundry.sh
+./workshop/scripts/deploy-spoke-foundry.sh --spoke-suffix 1
 ```
 
-This step deploys a sample Citadel Spoke: a standalone Azure AI Foundry account and project that represent an onboarded workload (use case).
+This step deploys a sample Citadel Spoke: a standalone Azure AI Foundry account and project that represent an onboarded workload (use case). For example, if the hub resource group is `rg-citadel-demo-1`, `-SpokeSuffix 1` creates a spoke resource group named `rg-citadel-demo-1-spoke-1`. To create another spoke without editing the scripts, rerun the same command with a different suffix:
+
+**PowerShell:**
+```powershell
+.\workshop\scripts\deploy-spoke-foundry.ps1 -SpokeSuffix 2
+.\workshop\scripts\deploy-spoke-foundry.ps1 -SpokeSuffix 10
+```
+
+**Bash:**
+```bash
+./workshop/scripts/deploy-spoke-foundry.sh --spoke-suffix 2
+./workshop/scripts/deploy-spoke-foundry.sh --spoke-suffix 10
+```
+
+The suffix only affects generated defaults. Advanced users can still override individual names with environment variables such as `SPOKE_RESOURCE_GROUP_NAME`, `FOUNDRY_ACCOUNT_NAME`, `KEY_VAULT_NAME`, `SPOKE_LOG_ANALYTICS_NAME`, `SPOKE_APP_INSIGHTS_NAME`, and `SPOKE_ACR_NAME`.
 
 ### 3.8 Verify Deployment
 
@@ -625,9 +639,9 @@ azd down --purge --force
 
 > **Important:** The `--purge` flag ensures soft-deleted resources (Key Vault, Cognitive Services) are permanently removed. The `--force` flag skips confirmation prompts.
 
-> **Note:** `azd down` only removes the hub resources that were deployed via `azd up`. You must also manually delete the **spoke resource group** in the Azure Portal, since it was deployed separately via the script.
+> **Note:** `azd down` only removes the hub resources that were deployed via `azd up`. You must also manually delete any **spoke resource groups** in the Azure Portal, since they were deployed separately via the script.
 
-Verify in the Azure Portal that both resource groups (hub and spoke) have been deleted.
+Verify in the Azure Portal that the hub resource group and any spoke resource groups have been deleted.
 
 ---
 

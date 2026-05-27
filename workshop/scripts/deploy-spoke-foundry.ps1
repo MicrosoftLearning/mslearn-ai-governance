@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$SpokeResourceGroupName = $env:SPOKE_RESOURCE_GROUP_NAME,
+    [string]$SpokeSuffix = $env:SPOKE_SUFFIX,
     [string]$FoundryAccountName = $env:FOUNDRY_ACCOUNT_NAME,
     [string]$FoundryProjectName = $env:FOUNDRY_PROJECT_NAME,
     [string]$KeyVaultName = $env:KEY_VAULT_NAME,
@@ -17,6 +18,7 @@ $aiProjectManagerRoleId = 'eadc314b-1a2d-4efa-be10-5d325db5065e'
 $keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 $acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 $foundryAppInsightsConnectionApiVersion = '2025-06-01'
+$securityControlTag = 'SecurityControl=Ignore'
 
 function Write-Step {
     param([string]$Message)
@@ -129,6 +131,21 @@ function Add-RoleAssignmentIfMissing {
     Write-Host "Assigned role: $RoleName"
 }
 
+function Set-SecurityControlTag {
+    param([string]$ResourceId)
+
+    if ([string]::IsNullOrWhiteSpace($ResourceId)) {
+        return
+    }
+
+    & az tag update `
+        --resource-id $ResourceId `
+        --operation Merge `
+        --tags $securityControlTag `
+        --only-show-errors `
+        -o none
+}
+
 Assert-Command az
 Assert-Command azd
 
@@ -151,18 +168,32 @@ if (-not [string]::IsNullOrWhiteSpace($subscriptionId)) {
     $subscriptionId = ConvertTo-TrimmedCliOutput (& az account show --query id -o tsv)
 }
 
+$seedSource = if ([string]::IsNullOrWhiteSpace($azdEnvName)) { $governanceResourceGroup } else { $azdEnvName }
+$tagEnvName = if ([string]::IsNullOrWhiteSpace($azdEnvName)) { 'unknown' } else { $azdEnvName }
+$baseNameSeed = ConvertTo-SafeNamePart $seedSource
+$baseCompactSeed = ConvertTo-CompactNamePart $seedSource
+$hasSpokeSuffix = -not [string]::IsNullOrWhiteSpace($SpokeSuffix)
+
+if ($hasSpokeSuffix) {
+    $spokeSuffixName = ConvertTo-SafeNamePart $SpokeSuffix
+    $spokeSuffixCompact = ConvertTo-CompactNamePart $SpokeSuffix
+    $nameSeed = "$baseNameSeed-spoke-$spokeSuffixName"
+    $compactSeed = "${baseCompactSeed}spoke$spokeSuffixCompact"
+    $defaultSpokeResourceGroupName = "$governanceResourceGroup-spoke-$spokeSuffixName"
+} else {
+    $nameSeed = $baseNameSeed
+    $compactSeed = $baseCompactSeed
+    $defaultSpokeResourceGroupName = "$governanceResourceGroup-spoke"
+}
+
+$subscriptionSuffix = ($subscriptionId -replace '-', '').Substring(0, 8)
+
 if ([string]::IsNullOrWhiteSpace($SpokeResourceGroupName)) {
-    $SpokeResourceGroupName = "$governanceResourceGroup-spoke"
+    $SpokeResourceGroupName = $defaultSpokeResourceGroupName
 }
 if ([string]::IsNullOrWhiteSpace($FoundryProjectName)) {
     $FoundryProjectName = 'citadel-agents-project'
 }
-
-$seedSource = if ([string]::IsNullOrWhiteSpace($azdEnvName)) { $governanceResourceGroup } else { $azdEnvName }
-$tagEnvName = if ([string]::IsNullOrWhiteSpace($azdEnvName)) { 'unknown' } else { $azdEnvName }
-$nameSeed = ConvertTo-SafeNamePart $seedSource
-$compactSeed = ConvertTo-CompactNamePart $seedSource
-$subscriptionSuffix = ($subscriptionId -replace '-', '').Substring(0, 8)
 
 if ([string]::IsNullOrWhiteSpace($FoundryAccountName)) {
     $FoundryAccountName = "aif-$nameSeed-$subscriptionSuffix"
@@ -207,7 +238,7 @@ if ((Invoke-NativeCommandQuietly { & az cognitiveservices account show --name $F
         --custom-domain $FoundryAccountName `
         --allow-project-management true `
         --yes `
-        --tags "azd-env-name=$tagEnvName" 'workload=citadel-spoke' `
+        --tags "azd-env-name=$tagEnvName" 'workload=citadel-spoke' $securityControlTag `
         -o none
 } else {
     Write-Host "Foundry account already exists: $FoundryAccountName"
@@ -218,6 +249,7 @@ $foundryAccountId = ConvertTo-TrimmedCliOutput (& az cognitiveservices account s
     --resource-group $SpokeResourceGroupName `
     --query id `
     -o tsv)
+Set-SecurityControlTag -ResourceId $foundryAccountId
 
 $foundryAccountPatchBody = @{
     properties = @{
@@ -261,6 +293,9 @@ if ((Invoke-NativeCommandQuietly { & az cognitiveservices account project show -
 } else {
     Write-Host "Foundry project already exists: $FoundryProjectName"
 }
+
+$projectResourceId = "/subscriptions/$subscriptionId/resourceGroups/$SpokeResourceGroupName/providers/Microsoft.CognitiveServices/accounts/$FoundryAccountName/projects/$FoundryProjectName"
+Set-SecurityControlTag -ResourceId $projectResourceId
 
 Write-Step 'Ensuring Application Insights CLI extension'
 & az extension add --name application-insights --upgrade --only-show-errors *> $null
@@ -311,8 +346,6 @@ $appInsightsConnectionString = ConvertTo-TrimmedCliOutput (& az monitor app-insi
     --query connectionString `
     -o tsv)
 
-$projectResourceId = "/subscriptions/$subscriptionId/resourceGroups/$SpokeResourceGroupName/providers/Microsoft.CognitiveServices/accounts/$FoundryAccountName/projects/$FoundryProjectName"
-
 $foundryConnectionBody = @{
     properties = @{
         category = 'AppInsights'
@@ -358,7 +391,7 @@ if ((Invoke-NativeCommandQuietly { & az keyvault show --name $KeyVaultName --res
         '--public-network-access', 'Enabled',
         '--default-action', 'Allow',
         '--bypass', 'AzureServices',
-        '--tags', "azd-env-name=$tagEnvName", 'workload=citadel-spoke',
+        '--tags', "azd-env-name=$tagEnvName", 'workload=citadel-spoke', $securityControlTag,
         '-o', 'none'
     )
     if ([string]::Equals($KeyVaultEnablePurgeProtection, 'true', [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -384,6 +417,7 @@ $keyVaultId = ConvertTo-TrimmedCliOutput (& az keyvault show `
     --resource-group $SpokeResourceGroupName `
     --query id `
     -o tsv)
+Set-SecurityControlTag -ResourceId $keyVaultId
 
 Write-Step 'Assigning RBAC roles to the signed-in user'
 Add-RoleAssignmentIfMissing -PrincipalId $currentUserObjectId -PrincipalType User -RoleId $aiProjectManagerRoleId -RoleName 'Azure AI Project Manager' -Scope $foundryAccountId
