@@ -1,4 +1,3 @@
-import logging
 import os
 from datetime import date, datetime, timedelta, timezone as tz
 from typing import Annotated
@@ -101,54 +100,28 @@ def delete_user(
 
 
 # ---------------------------------------------------------------------------
-# AGT → OpenTelemetry bridge.
-# Forwards records from agent_os / agentmesh / agent_sre loggers into the
-# same OTEL tracer that the hosted-agent platform already wires up to
-# Application Insights, so policy/audit/rogue events show up as spans
-# alongside GenAI spans.
+# AGT OpenTelemetry.
+# enable_otel() is the AGT-native integration from the Agent Governance Toolkit.
+# It emits spans such as agt.policy.evaluate and metrics such as
+# agt.policy.evaluations / agt.policy.denials / agt.policy.latency_ms.
 # ---------------------------------------------------------------------------
 
-_AGT_LOGGER_NAMES = ("agent_os", "agentmesh", "agent_sre")
-_AGT_STRUCTURED_FIELDS = (
-    "event_type", "agent_did", "action", "outcome",
-    "policy_decision", "resource",
-)
+def _enable_agt_otel(service_name: str) -> None:
+    connection_string = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    provider_name = trace.get_tracer_provider().__class__.__name__
 
-
-class _AGTOtelBridge(logging.Handler):
-    """Emits a short OTEL span for every AGT log record."""
-
-    def __init__(self) -> None:
-        super().__init__(level=logging.INFO)
-        self._tracer = trace.get_tracer("agt.audit")
-
-    def emit(self, record: logging.LogRecord) -> None:
+    if connection_string and provider_name in {"ProxyTracerProvider", "DefaultTracerProvider"}:
         try:
-            attrs = {
-                "agt.logger": record.name,
-                "agt.level": record.levelname,
-                "agt.message": record.getMessage()[:500],
-            }
-            for field in _AGT_STRUCTURED_FIELDS:
-                value = getattr(record, field, None)
-                if value is not None:
-                    attrs[f"agt.{field}"] = str(value)
-            span_name = f"agt.{getattr(record, 'event_type', None) or record.name}"
-            with self._tracer.start_as_current_span(span_name, attributes=attrs):
-                pass
+            from azure.monitor.opentelemetry import configure_azure_monitor
+
+            configure_azure_monitor(connection_string=connection_string)
         except Exception:
-            # Telemetry must never break the request path.
+            # The hosted-agent platform may have already configured OTEL.
             pass
 
+    from agentmesh.governance import enable_otel
 
-def _install_agt_otel_bridge() -> None:
-    handler = _AGTOtelBridge()
-    for name in _AGT_LOGGER_NAMES:
-        lg = logging.getLogger(name)
-        lg.setLevel(logging.INFO)
-        # Avoid duplicate handlers across hot reloads.
-        if not any(isinstance(h, _AGTOtelBridge) for h in lg.handlers):
-            lg.addHandler(handler)
+    enable_otel(service_name=service_name)
 
 
 # ---------------------------------------------------------------------------
@@ -156,8 +129,6 @@ def _install_agt_otel_bridge() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    _install_agt_otel_bridge()
-
     # AGT MAF adapter — built lazily so import errors surface clearly at boot.
     from agent_os.integrations.maf_adapter import create_governance_middleware
 
@@ -171,6 +142,8 @@ def main() -> None:
     allowed_tool_names = [t.name if hasattr(t, "name") else t.__name__ for t in tools]
 
     agent_name_env = os.environ.get("OTEL_SERVICE_NAME", "citadel-hr-agent")
+    _enable_agt_otel(agent_name_env)
+
     governance = create_governance_middleware(
         policy_directory="policies",
         allowed_tools=allowed_tool_names,
