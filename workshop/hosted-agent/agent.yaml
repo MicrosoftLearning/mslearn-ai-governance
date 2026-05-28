@@ -15,3 +15,5 @@ environment_variables:
     value: "true"
   - name: OTEL_SERVICE_NAME
     value: citadel-hr-agent
+  - name: OTEL_RESOURCE_ATTRIBUTES
+    value: service.name=citadel-hr-agent,service.namespace=citadel,deployment.environment=workshop

@@ -2,6 +2,10 @@ import os
 from datetime import date, datetime, timedelta, timezone as tz
 from typing import Annotated
 
+import logging
+import threading
+import time as _time
+
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -100,28 +104,219 @@ def delete_user(
 
 
 # ---------------------------------------------------------------------------
-# AGT OpenTelemetry.
-# enable_otel() is the AGT-native integration from the Agent Governance Toolkit.
-# It emits spans such as agt.policy.evaluate and metrics such as
-# agt.policy.evaluations / agt.policy.denials / agt.policy.latency_ms.
+# OpenTelemetry note.
+#
+# The Foundry hosted-agent platform auto-configures the global OTel
+# TracerProvider / MeterProvider / LoggerProvider via the
+# microsoft-opentelemetry distro using the injected
+# APPLICATIONINSIGHTS_CONNECTION_STRING. We deliberately do NOT call
+# configure_azure_monitor() or agentmesh.governance.enable_otel() here:
+# both attempt to override the global providers and trigger
+# "Overriding of current TracerProvider is not allowed" warnings, which
+# leaves AGT spans attached to a process-local provider that nobody
+# exports.
+#
+# AGT telemetry instead flows through the canonical
+# AuditLog.export_cloudevents() surface: we construct a shared AuditLog,
+# pass it to create_governance_middleware(audit_log=...), and the existing
+# OTel pipeline picks it up. Custom span emission can use:
+#     tracer = trace.get_tracer(__name__)
 # ---------------------------------------------------------------------------
 
-def _enable_agt_otel(service_name: str) -> None:
-    connection_string = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
-    provider_name = trace.get_tracer_provider().__class__.__name__
+tracer = trace.get_tracer(__name__)
 
-    if connection_string and provider_name in {"ProxyTracerProvider", "DefaultTracerProvider"}:
-        try:
-            from azure.monitor.opentelemetry import configure_azure_monitor
 
-            configure_azure_monitor(connection_string=connection_string)
-        except Exception:
-            # The hosted-agent platform may have already configured OTEL.
-            pass
+# ---------------------------------------------------------------------------
+# AGT AuditLog -> OTel logger flush task.
+#
+# create_governance_middleware records every policy / capability / rogue
+# decision into the in-memory AuditLog. To surface those decisions in
+# Application Insights we periodically drain AuditLog.export_cloudevents()
+# onto a stdlib logger. The platform distro auto-bridges stdlib logging to
+# the OTel LoggerProvider, so each CloudEvent becomes a structured log
+# record (visible in App Insights "traces" table with logger name
+# `agt.audit`).
+#
+# Runs in a daemon thread so it does not interfere with the Hypercorn
+# event loop owned by ResponsesHostServer.run().
+# ---------------------------------------------------------------------------
 
-    from agentmesh.governance import enable_otel
+def _start_audit_flusher(audit_log, interval_s: float = 5.0) -> None:
+    audit_logger = logging.getLogger("agt.audit")
+    # Force INFO so flusher diagnostics survive any root-level filter the
+    # platform may install. logger.propagate stays True so the OTel logging
+    # bridge installed by the distro still picks the records up.
+    audit_logger.setLevel(logging.INFO)
 
-    enable_otel(service_name=service_name)
+    # One-shot startup diagnostic: log the actual AuditLog API surface so we
+    # can see in stderr which method name to call (export_cloudevents vs.
+    # export vs. something else).
+    public_methods = sorted(m for m in dir(audit_log) if not m.startswith("_"))
+    audit_logger.info(
+        "agt.audit flusher starting (interval=%.1fs); AuditLog API: %s",
+        interval_s, ", ".join(public_methods),
+    )
+
+    def _flush_loop() -> None:
+        # AGT 3.6.0 AuditLog.export_cloudevents() returns the FULL ordered
+        # list of events recorded so far (no incremental kwarg). We track how
+        # many we've already emitted and slice from there each tick.
+        seen = 0
+        tick = 0
+        while True:
+            tick += 1
+            drained_this_tick = 0
+            err: Exception | None = None
+            try:
+                events = audit_log.export_cloudevents() or []
+                new_events = events[seen:]
+                for ce in new_events:
+                    ce_type = ce.get("type") if isinstance(ce, dict) else getattr(ce, "type", None)
+                    audit_logger.info(
+                        "agt.audit.event",
+                        extra={"agt.event.type": ce_type, "agt.cloudevent": ce},
+                    )
+                    drained_this_tick += 1
+                seen = len(events)
+            except Exception as exc:  # never let the flusher die silently
+                err = exc
+
+            # Heartbeat once per minute (every 12 ticks at 5s interval) so we
+            # can confirm the thread is alive even when nothing is drained.
+            if err is not None:
+                audit_logger.warning(
+                    "agt.audit flush tick %d failed: %s: %s",
+                    tick, type(err).__name__, err,
+                )
+            elif drained_this_tick > 0:
+                audit_logger.info(
+                    "agt.audit flush tick %d drained=%d total=%d",
+                    tick, drained_this_tick, seen,
+                )
+            elif tick % 12 == 1:
+                audit_logger.info(
+                    "agt.audit flush tick %d heartbeat (no new events; total=%d)",
+                    tick, seen,
+                )
+            _time.sleep(interval_s)
+
+    threading.Thread(
+        target=_flush_loop,
+        name="agt-audit-flusher",
+        daemon=True,
+    ).start()
+
+
+def _create_streaming_governance_middleware(
+    *,
+    policy_directory: str,
+    allowed_tools: list[str],
+    agent_id: str,
+    audit_log,
+) -> list:
+    from agent_framework import (
+        AgentMiddleware,
+        AgentResponse,
+        AgentResponseUpdate,
+        Content,
+        Message,
+        ResponseStream,
+    )
+    from agent_os.integrations.maf_adapter import create_governance_middleware
+    from agent_os.policies import PolicyEvaluator
+
+    class StreamingGovernancePolicyMiddleware(AgentMiddleware):
+        def __init__(self, evaluator: PolicyEvaluator, audit_log) -> None:
+            self.evaluator = evaluator
+            self.audit_log = audit_log
+
+        async def process(self, context, call_next) -> None:
+            agent_name = getattr(context.agent, "name", "unknown")
+            messages = getattr(context, "messages", None) or []
+            last_message_text = ""
+            if messages:
+                last_msg = messages[-1]
+                last_message_text = getattr(last_msg, "text", None) or str(last_msg)
+
+            decision = self.evaluator.evaluate(
+                {
+                    "agent": agent_name,
+                    "message": last_message_text,
+                    "timestamp": _time.time(),
+                    "stream": getattr(context, "stream", False),
+                    "message_count": len(messages),
+                }
+            )
+
+            metadata = getattr(context, "metadata", {})
+            metadata["governance_decision"] = decision
+
+            if decision.allowed:
+                if self.audit_log:
+                    self.audit_log.log(
+                        event_type="policy_evaluation",
+                        agent_did=agent_name,
+                        action="allow",
+                        data={
+                            "matched_rule": decision.matched_rule,
+                            "message_preview": last_message_text[:200],
+                        },
+                        outcome="success",
+                        policy_decision=decision.action,
+                    )
+                await call_next()
+                return
+
+            logging.getLogger("agent_os.integrations.maf_adapter").info(
+                "Policy DENY for agent '%s': %s (rule=%s)",
+                agent_name,
+                decision.reason,
+                decision.matched_rule,
+            )
+            refusal = f"Policy violation: {decision.reason}"
+
+            if self.audit_log:
+                self.audit_log.log(
+                    event_type="policy_violation",
+                    agent_did=agent_name,
+                    action="deny",
+                    data={
+                        "reason": decision.reason,
+                        "matched_rule": decision.matched_rule,
+                        "message_preview": last_message_text[:200],
+                    },
+                    outcome="denied",
+                    policy_decision=decision.action,
+                )
+
+            if getattr(context, "stream", False):
+                async def _deny_stream():
+                    yield AgentResponseUpdate(
+                        contents=[Content.from_text(refusal)],
+                        role="assistant",
+                        agent_id=agent_name,
+                    )
+
+                context.result = ResponseStream(
+                    _deny_stream(),
+                    finalizer=AgentResponse.from_updates,
+                )
+            else:
+                context.result = AgentResponse(
+                    messages=[Message("assistant", [refusal])]
+                )
+
+    evaluator = PolicyEvaluator()
+    evaluator.load_policies(policy_directory)
+    stack = create_governance_middleware(
+        policy_directory=None,
+        allowed_tools=allowed_tools,
+        agent_id=agent_id,
+        enable_rogue_detection=True,
+        audit_log=audit_log,
+    )
+    stack.insert(1, StreamingGovernancePolicyMiddleware(evaluator, audit_log))
+    return stack
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +324,7 @@ def _enable_agt_otel(service_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    # AGT MAF adapter — built lazily so import errors surface clearly at boot.
-    from agent_os.integrations.maf_adapter import create_governance_middleware
+    from agentmesh.governance import AuditLog
 
     tools = [
         get_pto_balance,
@@ -142,14 +336,21 @@ def main() -> None:
     allowed_tool_names = [t.name if hasattr(t, "name") else t.__name__ for t in tools]
 
     agent_name_env = os.environ.get("OTEL_SERVICE_NAME", "citadel-hr-agent")
-    _enable_agt_otel(agent_name_env)
 
-    governance = create_governance_middleware(
+    # Shared AuditLog — emits OTel-compatible CloudEvents via
+    # audit_log.export_cloudevents(); plugs into the already-configured
+    # global LoggerProvider installed by the platform distro.
+    audit_log = AuditLog()
+
+    governance = _create_streaming_governance_middleware(
         policy_directory="policies",
         allowed_tools=allowed_tool_names,
         agent_id=agent_name_env,
-        enable_rogue_detection=True,
+        audit_log=audit_log,
     )
+
+    # Drain AGT audit events into the OTel pipeline every 5s.
+    _start_audit_flusher(audit_log, interval_s=5.0)
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
