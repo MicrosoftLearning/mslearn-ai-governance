@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Silence a known Azure CLI Python SyntaxWarning from an upstream dependency.
+export PYTHONWARNINGS="${PYTHONWARNINGS:+$PYTHONWARNINGS,}ignore::SyntaxWarning"
+
 AI_PROJECT_MANAGER_ROLE_ID="eadc314b-1a2d-4efa-be10-5d325db5065e"
 KEY_VAULT_SECRETS_USER_ROLE_ID="4633458b-17de-408a-b874-0445c86b69e6"
 ACR_PULL_ROLE_ID="7f951dda-4ed3-4680-a7ca-43fe172d538d"
