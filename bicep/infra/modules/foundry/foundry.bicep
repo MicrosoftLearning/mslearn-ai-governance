@@ -276,6 +276,9 @@ resource roleAssignmentCognitiveServicesUser 'Microsoft.Authorization/roleAssign
     }
 }]
 
+// Serialize model deployment modules across Foundry accounts to reduce
+// transient parent-account operation conflicts during first-time provisioning.
+@batchSize(1)
 module modelDeployments 'deployments.bicep' = [for (config, i) in aiServicesConfig: {
   name: take('models-${foundryResources[i].name}', 64)
   params: {
@@ -283,7 +286,8 @@ module modelDeployments 'deployments.bicep' = [for (config, i) in aiServicesConf
     modelsConfig: filter(modelsConfig, model => !contains(model, 'aiservice') || model.aiservice == foundryResources[i].name )
   }
   dependsOn: [
-    privateEndpoints
+    aiProject[i]
+    roleAssignmentCognitiveServicesUser[i]
   ]
 }]
 
