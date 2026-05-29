@@ -4,8 +4,11 @@ set -e
 echo "=== Citadel Workshop — Post-Create Setup ==="
 
 # Install Azure Developer CLI
+# Run the installer as root so it doesn't emit "Permission denied" /
+# "requires elevated permission" warnings while it self-escalates to write
+# into /opt/microsoft and /usr/local/bin.
 echo "Installing Azure Developer CLI (azd)..."
-curl -fsSL https://aka.ms/install-azd.sh | bash
+curl -fsSL https://aka.ms/install-azd.sh | sudo bash
 
 # On Debian trixie the devcontainer azure-cli feature falls back to the distro
 # python3-azure-cli package, which is broken under Python 3.13 (monitor module
