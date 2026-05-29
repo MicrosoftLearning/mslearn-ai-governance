@@ -416,7 +416,8 @@ local/**/*
 infra/usecase-onboarding/samples/financial-assistant-usecase-local.sh
 **/*local.bicepparam
 **/.temp/*
-.venv/**
+.venv/
+**/.venv/
 validation-local/**
 bicep/infra/citadel-access-contracts/contracts
 bicep/infra/citadel-access-contracts/contracts/testing-unifiedai/dev/main.bicepparam
