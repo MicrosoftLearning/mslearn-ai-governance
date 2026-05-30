@@ -8,35 +8,6 @@
     },
     "version": "v1"
   },
-  "tags": [
-    {
-      "name": "Chat"
-    },
-    {
-      "name": "Containers"
-    },
-    {
-      "name": "Embeddings"
-    },
-    {
-      "name": "Evals"
-    },
-    {
-      "name": "Files"
-    },
-    {
-      "name": "Fine-tuning"
-    },
-    {
-      "name": "Models"
-    },
-    {
-      "name": "Responses"
-    },
-    {
-      "name": "Vector Stores"
-    }
-  ],
   "paths": {
     "/deployments": {
       "get": {

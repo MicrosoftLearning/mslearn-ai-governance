@@ -60,7 +60,6 @@
         "tokenUrl": "https://login.microsoftonline.com/common/oauth2/token"
       }
     },
-    "tags": [],
     "paths": {
       "/documentClassifiers": {
         "get": {

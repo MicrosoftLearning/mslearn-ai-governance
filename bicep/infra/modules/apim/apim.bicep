@@ -438,6 +438,7 @@ module apimOpenaiApi './inference-api.bicep' = {
     llmBackends
     llmBackendPools
     llmPolicyFragments
+    apiUniversalLLM
   ]
 }
 
@@ -456,6 +457,7 @@ module apiUnifiedAI './unified-ai-api.bicep' = if (enableUnifiedAiApi) {
     llmBackends
     llmBackendPools
     llmPolicyFragments
+    apimOpenaiApi
   ]
 }
 
