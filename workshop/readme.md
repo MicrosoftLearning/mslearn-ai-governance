@@ -18,14 +18,13 @@ You deploy the hub with `azd up`, then deploy the sample spoke with `workshop/sc
 
 1. [Workshop Overview](#1-workshop-overview)
 2. [Pre-Requisites](#2-pre-requisites)
-3. [Lab 1 — Deploy Citadel to Your Azure Subscription](#3-lab-1-deploy-citadel-to-your-azure-subscription)
-4. [Lab 2 — Review Deployed Services and Configuration](#4-lab-2-review-deployed-services-and-configuration)
-5. [Lab 3 — Run Validation Notebooks](#5-lab-3-run-validation-notebooks)
-6. [Lab 4 — Observability: Metrics, Logs, and Telemetry](#6-lab-4-observability-metrics-logs-and-telemetry)
+3. [Lab 1 — Deploy Citadel to Your Azure Subscription](#lab-1)
+4. [Lab 2 — Review Deployed Services and Configuration](#lab-2)
+5. [Lab 3 — Run Validation Notebooks](#lab-3)
+6. [Lab 4 — Observability: Metrics, Logs, and Telemetry](#lab-4)
 7. [Clean Up](#7-clean-up)
 8. [Troubleshooting](#8-troubleshooting)
 
-[SasaJ] Lab 1,2,3,4 links are still non-functional. Could it be because there is already "-" in the the heading name? 
 ---
 
 ## 1. Workshop Overview
@@ -67,11 +66,28 @@ Complete these steps **before** the workshop day to ensure a smooth experience.
 | Requirement | Details |
 |-------------|---------|
 | **Azure Subscription** | You need an Azure subscription where you can deploy resources at subscription scope |
-| **Deployment Permissions** | Use **Owner** permissions, or **Contributor** plus **User Access Administrator**, because `azd up` creates managed identities and role assignments |
+| **Deployment Permissions** | Use **Owner** permissions, or **Contributor** plus **User Access Administrator**, because `azd up` creates managed identities and assigns RBAC roles |
 | **Sufficient Quota** | Quota for Azure OpenAI / AI Foundry model deployments (GPT-4.1, DeepSeek-R1, etc.) in the target region |
 | **Resource Providers** | Several resource providers must be registered (see [Section 2.4](#24-register-azure-resource-providers)) |
 
-[SasaJ] Can you be more specific and call out what "managed identities and role assignments" are created?
+<details>
+<summary><strong>Why these deployment permissions are required</strong></summary>
+
+The deployment creates user-assigned managed identities for API Management and usage-processing workloads (`id-apim-*` and `id-logicapp-*` by default). It also enables system-assigned identities on services such as AI Foundry projects and the Logic App.
+
+During `azd up`, Bicep assigns roles to these identities, including:
+
+- **Cognitive Services User** and **Cognitive Services OpenAI User** for the APIM managed identity.
+- **Azure Event Hubs Data Sender** for the APIM managed identity.
+- **Azure Event Hubs Data Owner** and **Monitoring Reader** for the usage-processing Logic App identity.
+- **Cosmos DB Built-in Data Contributor** on the Cosmos DB SQL account for usage ingestion.
+- **Key Vault Secrets User** for APIM and AI Foundry identities.
+- **Key Vault Certificates Officer** for AI Foundry identities.
+- **Azure AI Project Manager** for the deployer on AI Foundry resources.
+
+Creating these role assignments requires `Microsoft.Authorization/roleAssignments/write`, which is included in **Owner** or **User Access Administrator**.
+
+</details>
 
 ### 2.2 Lab Environment Requirements
 
@@ -158,6 +174,8 @@ code --version
 ```
 
 ---
+
+<a id="lab-1"></a>
 
 ## 3. Lab 1 — Deploy Citadel to Your Azure Subscription
 
@@ -345,6 +363,8 @@ You can verify in the Azure Portal:
 
 ---
 
+<a id="lab-2"></a>
+
 ## 4. Lab 2 — Review Deployed Services and Configuration
 
 **Goal:** Understand the services Citadel deploys and how they are configured.  
@@ -425,6 +445,8 @@ API Management is the core of Citadel. Explore these areas:
 2. As part of the notebooks execution, secrets (such as access contract subscription keys) will be created here
 
 ---
+
+<a id="lab-3"></a>
 
 ## 5. Lab 3 — Run Validation Notebooks
 
@@ -516,6 +538,8 @@ The workshop includes a subset of validation notebooks. Execute them in this ord
 - 🛠️ **Errors?** — Check the [Troubleshooting](#8-troubleshooting) section
 
 ---
+
+<a id="lab-4"></a>
 
 ## 6. Lab 4 — Observability: Metrics, Logs, and Telemetry
 
