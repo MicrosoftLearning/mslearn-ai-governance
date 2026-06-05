@@ -20,8 +20,6 @@ timeout_seconds="${TIMEOUT_SECONDS:-1200}"
 allow_errors="${ALLOW_ERRORS:-true}"
 python_bin="${PYTHON_BIN:-python}"
 
-require_command "$python_bin"
-
 cd "$workshop_dir"
 
 if [[ ! -d .venv ]]; then
@@ -32,6 +30,7 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
+require_command "$python_bin"
 require_command jupyter
 
 log "Registering Jupyter kernel '$kernel_name'"
