@@ -164,30 +164,29 @@ These two APIs use shared fragments for a straightforward model → backend pool
 
 #### Step 1: Model Extraction (set-llm-requested-model)
 
-The `set-llm-requested-model` policy fragment extracts the model from the request:
+The `set-llm-requested-model` policy fragment extracts the model from the request. It is also invoked by **Citadel access-contract product policies** (`bicep/infra/citadel-access-contracts/policies/default-ai-product-policy.xml`), so it must recognize **every provider's** model-location convention so that `validate-model-access` can enforce `allowedModels` regardless of which API surface the call lands on.
 
-| Source | Pattern | Example |
-|--------|---------|---------|
-| **GET/DELETE Request** | Any GET or DELETE operation | Returns `"non-llm-request"` (skips model extraction) |
-| **URL Path Parameter** | `/deployments/{deployment-id}/...` | Azure OpenAI API (named operations) |
-| **URL Path Segment** | `/openai/deployments/{model}/...` | Universal LLM API (wildcard operations) |
-| **Request Body** | `{"model": "gpt-4o", ...}` | Universal LLM / Inference API |
+| Source | Pattern | Example | Used by |
+|--------|---------|---------|---------|
+| **GET/DELETE request** | Any GET or DELETE operation | Returns `"non-llm-request"` (skips model extraction) | All APIs |
+| **`deployment-id` path parameter** | `/deployments/{deployment-id}/...` (named operation) | `/openai/deployments/gpt-4o/chat/completions` | Azure OpenAI API |
+| **`/deployments/{model}/` segment** | Wildcard operation, model between `/deployments/` and next `/` | `/openai/deployments/gpt-4o/chat/completions` (Universal LLM AOAI passthrough) | Universal LLM, Unified AI `/openai/...` |
+| **`/model/{modelId}/` segment** (singular) | AWS Bedrock Converse / Invoke; model between `/model/` and the LAST `/` (operation suffix); URL-decoded. Supports inference-profile ARNs containing `/` | `/unified-ai/bedrock/model/eu.amazon.nova-lite-v1:0/converse`, `/unified-ai/bedrock/model/arn%3Aaws%3Abedrock%3Aus-east-1%3A123%3Ainference-profile%2Feu.amazon.nova-lite-v1%3A0/converse` | Unified AI native Bedrock |
+| **`/models/{modelId}:method` segment** (plural with `:`) | Gemini native; model between `/models/` and `:` | `/unified-ai/gemini/v1beta/models/gemini-2.5-flash:generateContent` | Unified AI native Gemini |
+| **Request body `model` field** | OpenAI-compat / Anthropic Messages / Inference body | `{"model": "claude-haiku-4-5", ...}` | Universal LLM, Anthropic Messages, OpenAI-compat surfaces |
 
-**Supported Patterns:**
-1. **GET/DELETE Requests**: Returns `"non-llm-request"` to skip model-based routing (used for operations like listing models or deleting responses)
-2. Azure OpenAI: Model from `deployment-id` path parameter (`/deployments/{deployment-id}/chat/completions`)
-3. Universal LLM: Model from URL path by detecting `/deployments/{model}/` segment (wildcard operations where APIM has no named path parameters)
-4. Inference Endpoint: Model from request body JSON (`{"model": "model-name", ...}`)
+**Logic (evaluated in order, first match wins):**
 
-**Output Variable:**
-- requestedModel: The extracted model name, `"non-llm-request"` for GET/DELETE operations, or empty string if not found
+1. **GET/DELETE request** → returns `"non-llm-request"` (skips model validation; Responses API id-security may later hydrate `requestedModel` from cache).
+2. **`deployment-id` path parameter** (Azure OpenAI named operations).
+3. **`/deployments/{model}/` segment** (Azure OpenAI wildcard, Universal LLM `/openai/deployments/...` passthrough).
+4. **`/model/{modelId}/` segment** (AWS Bedrock native `/model/{id}/converse|invoke`). Model id is URL-decoded — Bedrock model ids contain `:` (e.g. `eu.amazon.nova-lite-v1:0`) which clients typically percent-encode.
+5. **`/models/{modelId}:method` segment** (Gemini native `/models/{id}:generateContent|streamGenerateContent|embedContent`). Model id is URL-decoded.
+6. **Request body `model` field** (OpenAI-compat including `/v1/chat/completions`, Anthropic Messages, Bedrock OpenAI-compat).
 
-Logic:
-- GET/DELETE requests return `"non-llm-request"` (no model routing needed)
-- First attempts to extract from `deployment-id` path parameter (Azure OpenAI named operations)
-- If not found, scans the URL path for `/deployments/{model}/` segment (wildcard operations)
-- If not found, attempts to extract from request body `model` field (Inference pattern)
-- Returns empty string if no pattern matches
+If none match, returns 400 `missing_model_parameter`.
+
+**Why all APIs need universal extraction.** The default access-contract product policy (`bicep/infra/citadel-access-contracts/policies/default-ai-product-policy.xml`) `<include-fragment fragment-id="set-llm-requested-model" />` and then `validate-model-access` against the contract's `allowedModels` CSV. When a contract is bound to a product that exposes Universal LLM, Azure OpenAI, **and** Unified AI, the same fragment must extract the model name for OpenAI-compat (body), Azure deployments (path param), Bedrock native (`/model/{id}/`), and Gemini native (`/models/{id}:`). A missing pattern would either let unauthorized models through (extraction returns empty → 400 instead of 403) or block native paths entirely.
 
 #### Step 1.5: Responses API ID Security (`responses-id-security` / `responses-id-cache-store`)
 
@@ -273,11 +272,14 @@ The `set-target-backend-pool` fragment matches the requested model to a backend:
 - requestedModel: The model name extracted from the request payload (or `"non-llm-request"` for GET operations)
 - defaultBackendPool: Default backend pool to use when model is not mapped (default behavior empty string = error for unmapped models)
 - allowedBackendPools: Comma-separated list of allowed backend pool IDs (empty string = all pools allowed) - This is usually set at APIM product level to restrict access to certain backend pools per use case
+- compatiblePoolTypes: Comma-separated list of `poolType` values the API surface accepts (empty string = all pool types allowed). When set, pools whose `poolType` is not in the list are skipped during model matching, even if they advertise the same model name. Used by **Universal LLM API** (set to `azure-openai,ai-foundry,aws-bedrock-mantle,gemini-openai`) to enforce OpenAI-compatible routing only — preventing a `/models/chat/completions` call from accidentally landing on a native `aws-bedrock` (Converse), `gemini` (`generateContent`), or `anthropic` (Messages) pool that has no `/chat/completions` surface. Also used by the Unified AI `inference` api-type for the same reason.
 - backendPools: JArray containing all backend pool configurations
 
 **Output Variables:**
 - targetBackendPool: The selected backend pool name, `"non-llm-request"` for GET operations, or error code (ERROR_NO_MODEL, ERROR_NO_ALLOWED_POOLS)
 - targetPoolType: The type of the selected backend pool (e.g., "azure-openai", "ai-foundry", "non-llm-request")
+
+> **Why the `compatiblePoolTypes` filter matters.** When the same model id is registered against both a native pool and an OpenAI-compat pool — e.g. `eu.amazon.nova-lite-v1:0` appearing on both an `aws-bedrock` (Converse) backend and an `aws-bedrock-mantle` (`/v1/chat/completions`) backend — the unfiltered first-match-wins selection can route an OpenAI-compat request to the native pool. The native pool has no `/chat/completions` rewrite branch in `set-backend-authorization`, so the unrewritten path (e.g. `/chat/completions`) reaches AWS Bedrock and produces `com.amazon.coral.service#UnknownOperationException`. Setting `compatiblePoolTypes` on the inbound API surface makes the gateway skip incompatible pools and pick the right one.
 
 #### Step 4: Authentication & Routing (set-backend-authorization)
 
@@ -306,7 +308,11 @@ It is worth noting there is default implementations for Azure LLMs, but this can
 | `non-llm-request` | Skipped (operation-specific) | None |
 | `ai-foundry` | APIM's Managed Identity → Cognitive Services | None (or `/models/` prefix when `skipBackendUrlRewrite` is not set) |
 | `azure-openai` | APIM's Managed Identity → Cognitive Services | Injects `/deployments/{model}/` (skipped when `skipBackendUrlRewrite` is set) |
-| `aws-bedrock` | AWS SigV4 (IAM access keys via named values) | Path constructed as `/model/{model}/converse` by path-builder |
+| `aws-bedrock-mantle` | Native backend authorization (API key on backend resource) | Rewrites Universal LLM `/models/{op}` → `/v1/{op}` (chat/completions, responses, models) |
+| `gemini-openai` | Native backend authorization (API key on backend resource) | Rewrites Universal LLM `/models/{op}` → `/v1beta/openai/{op}` (chat/completions, embeddings, models) |
+| `aws-bedrock` | AWS SigV4 (IAM access keys via named values) | Path constructed as `/model/{model}/converse` by path-builder (Unified AI only) |
+| `gemini` | API key (query parameter) | Path constructed by path-builder (Unified AI only) |
+| `anthropic` | API key (`x-api-key` header) | Path forwarded as-is (Unified AI `/claude/...`) |
 | `external` | Backend credentials | None |
 
 > **Note:** When the Unified AI API sets `skipBackendUrlRewrite`, the `set-backend-authorization` fragment skips URL rewriting because the `path-builder` fragment handles URI construction instead.
@@ -398,11 +404,13 @@ Provides unified authentication across all API endpoints.
 #### Steps 5–8: Shared Fragment Execution
 
 Steps 5 through 8 use the same shared fragments as the Universal LLM and Azure OpenAI APIs:
-- **validate-model-access**: Checks `allowedModels` per product
-- **resolve-model-alias**: If `requestedModel` matches an alias name, replaces it with an underlying real model based on `priority` or `weighted` strategy. Sets `is-alias`, `original-model-alias`, and `alias-models` so the retry block can perform cross-model fallback. No-op when `requestedModel` is not an alias.
-- **set-backend-pools**: Loads backend pool configurations
-- **set-target-backend-pool**: Matches model to pool. For Unified AI, also checks `apiTypeOverrideBackend` — when set, bypasses pool matching and routes to the specified backend directly
-- **set-backend-authorization**: Sets managed identity token and backend service. Skips URL rewriting because `skipBackendUrlRewrite` is set by `request-processor`
+- **validate-model-access**: Checks `allowedModels` per product. Runs against the alias name (when the request used one) so RBAC stays at the contract level.
+- **set-backend-pools**: Loads the gateway's `backendPools` JArray (real pools + alias **virtual pool entries**).
+- **set-target-backend-pool**: Two responsibilities now —
+  1. **Alias resolution.** When `requestedModel` matches an alias virtual pool (`isAlias=true`), the fragment filters the alias members by the inbound API surface's `compatiblePoolTypes`, picks one based on `strategy` (`priority` / `weighted`), sets `is-alias`, `original-model-alias`, the resolved `requestedModel`, the picked member's `targetBackendPool` / `targetPoolType` / `targetAuthType` / `targetAuthConfigNamedValue`, and exposes `alias-fallback-members` (an ordered JArray pre-resolved with each remaining member's poolName / poolType / authType) for the retry block.
+  2. **Direct model→pool match.** When the model is not an alias, the existing pool match logic runs unchanged. For Unified AI, also checks `apiTypeOverrideBackend` — when set, bypasses pool matching and routes to the specified backend directly.
+- **resolve-model-alias**: Slim post-resolution body rewrite — replaces the JSON body's `model` field with `requestedModel` so backends see the real model name. No-op when `is-alias=false`.
+- **set-backend-authorization**: Sets managed identity token / api-key header / SigV4 signing as appropriate, then `set-backend-service`. Skips URL rewriting because `skipBackendUrlRewrite` is set by `request-processor`.
 
 #### Step 9: Path Builder (path-builder)
 
@@ -453,66 +461,92 @@ These operations use the shared `get-available-models` fragment and are handled 
 
 ## Model Aliases
 
-Model aliases let an admin expose a single client-facing name (e.g. `adv-gpt`) that the gateway resolves at runtime to one of several real underlying models (e.g. `gpt-5.4-mini`, `gpt-4.1`). Clients depend only on the alias, while the platform team is free to switch the underlying model line-up — useful for graceful model retirements, A/B testing, and cross-model fallback.
+Model aliases let an admin expose a single client-facing name (e.g. `adv-gpt`, `multi-cloud-claude`) that the gateway resolves at runtime to one of several real underlying models — possibly spanning different cloud providers. Clients depend only on the alias, while the platform team is free to switch the underlying line-up: useful for graceful model retirements, A/B testing, and **cross-provider load balancing / fallback transparent to the client**.
+
+### Aliases are virtual backend pools
+
+Each entry in `modelAliases` becomes a **virtual pool entry inside the same `backendPools` JArray that real pools live in**. The runtime alias resolution and the retry-time member walk both ride on the same `set-target-backend-pool` + retry pipeline that real models use, with no special-case code paths.
+
+| Capability | Direct model | Alias |
+|---|---|---|
+| Pool matching | `set-target-backend-pool` walks `backendPools` for a match on the model name. | Same fragment, but matches the alias's virtual pool entry first (entries with `isAlias=true`). |
+| Strategy | Pool members use APIM-native priority/weight (real APIM Backend Pool resource). | Alias members use **policy-level** priority/weight encoded into the alias virtual pool entry. |
+| Retry / fallback | APIM-native pool-level retry on 429/5xx. | Pool-level retry **plus** alias-fallback walk across remaining members on 429/5xx — supported on the Azure OpenAI API, Universal LLM API, and Unified AI API. |
+| Cross-provider | A direct request to a model is locked to that model's pool. | Alias members can mix Azure OpenAI, Bedrock, Gemini, Anthropic, etc. — fallback walks across providers. |
+| Compatible-pool-types filter | Applied at pool selection. | Applied at member selection, so an alias spanning native + OpenAI-compat surfaces only resolves to members compatible with the inbound surface. Members with no compatible pool are silently skipped. |
+| Body / URL rewrite | Driven by the resolved poolType + operation. | Same — once a member is picked, request takes the same code paths a direct call to that real model would have taken. |
 
 The same alias map is honored consistently across **all three LLM endpoints**:
 
-- **Azure OpenAI API** — `/openai/deployments/{alias}/chat/completions`
-- **Universal LLM API** — `/models/chat/completions` with `"model": "{alias}"` in the body
-- **Unified AI API** — any `/unified-ai/...` path that supplies a model in the body or URL
+- **Azure OpenAI API** — `/openai/deployments/{alias}/chat/completions` (alias members must be `azure-openai` or `ai-foundry` pools).
+- **Universal LLM API** — `/models/chat/completions` with `"model": "{alias}"` (alias members must be OpenAI-compat-capable pool types: `azure-openai`, `ai-foundry`, `aws-bedrock-mantle`, `gemini-openai`).
+- **Unified AI API** — `/unified-ai/v1/chat/completions` (OpenAI-compat surface) and the native prefixes `/unified-ai/bedrock/...`, `/unified-ai/gemini/...`, `/unified-ai/claude/...` (each restricts alias members to its own pool type).
 
-### Shared Resolution Fragment (`resolve-model-alias`)
+### Resolution flow
 
-A single policy fragment is invoked by every API after model extraction and access validation:
+The fragments execute in this order on every API surface:
 
-| API | Step | Notes |
-|---|---|---|
-| Azure OpenAI | After `validate-model-access`, before `set-backend-pools` | Static inline alias map (no metadata-config) |
-| Universal LLM | After `validate-model-access`, before `set-backend-pools` | Static inline alias map (no metadata-config) |
-| Unified AI | After `validate-model-access`, before `set-backend-pools` | Reads from `config-model-aliases` (cached metadata-config); inline map acts as fallback |
+```
+1. validate-model-access      → RBAC against alias name (if used)
+2. set-backend-pools           → loads `backendPools` JArray (real pools + alias virtual pools)
+3. set-target-backend-pool     → ALIAS RESOLUTION + member pick + targeting variables
+                                  + alias-fallback-members for retry
+4. resolve-model-alias         → body rewrite (model field) when is-alias=true; no-op otherwise
+5. set-backend-authorization   → header/SigV4/managed-identity per resolved poolType
+6. path-builder (Unified AI)   → URL rewrite per resolved poolType + operation
+backend retry                  → walks alias-fallback-members on 429/5xx (pre-stream only)
+```
 
-When the requested model matches an alias, the fragment:
-
-1. Sets `original-model-alias` = the alias name and `is-alias` = `true`.
-2. Picks an underlying real model based on `strategy` (`priority` or `weighted`) and overwrites `requestedModel` with it.
-3. Rewrites the JSON body's `model` field if present, so the backend receives the **resolved** model name.
-4. Rewrites the URL path `/deployments/{alias}/...` → `/deployments/{realModel}/...` so URL-based routing (Azure OpenAI / Unified AI `openai` api-type) targets the correct backend deployment.
-5. Exposes `alias-models` (a `JArray` of all underlying models) for downstream cross-model retry logic.
-
-When the requested model is **not** an alias, the fragment is a no-op — direct model selection is preserved unchanged.
+When the requested model is **not** an alias, step 3 falls through to its existing model→pool match logic and step 4 is a no-op — direct routing is preserved unchanged.
 
 ### Resolution Strategies
 
 | Strategy | Behavior | Best For |
 |----------|----------|----------|
-| `priority` (default) | The first model in `models` is always chosen. Other models act as fallback candidates for the Unified AI API retry block. | Production routing with a preferred primary and well-defined hot-spares. |
-| `weighted` | Each request picks a model at random with probability proportional to `weights`. | A/B testing, controlled rollout of a new model, blended traffic across model families. |
+| `priority` (default) | The first compatible member in `models` is always chosen. The remaining compatible members form the fallback list in order. | Production routing with a preferred primary and well-defined hot-spares. |
+| `weighted` | A compatible member is picked at random with probability proportional to `weights`. The remaining compatible members form a fallback list (round-walk after the picked one). | A/B testing, controlled rollout of a new model, blended traffic across model families. |
 
-### Cross-Model Fallback (Unified AI)
+### Cross-Model / Cross-Provider Fallback
 
-The Unified AI API's `<retry>` block is alias-aware: when `is-alias` is `true`, the retry budget is extended by the number of fallback models in the alias. On a transient failure (429 / 5xx) from the currently selected model, the gateway:
+The `<retry>` block in **all three** API policies (Azure OpenAI, Universal LLM v2, Unified AI) is alias-aware. When `is-alias` is `true`, the retry budget is extended by the size of `alias-fallback-members`. On a transient failure (429 / 5xx) from the currently selected member, the policy:
 
-1. Increments `alias-retry-index`.
-2. Switches `requestedModel` to the next model in `alias-models`.
-3. Re-runs `set-target-backend-pool`, `set-backend-authorization`, and `path-builder` so the request is re-issued through the matching backend pool of the new model.
+1. Increments `alias-retry-index` and reads the next entry from `alias-fallback-members`.
+2. Sets `requestedModel`, `targetBackendPool`, `targetPoolType`, `targetAuthType`, `targetAuthConfigNamedValue` directly from that entry — no second pool match needed because the entry is already pre-resolved.
+3. Re-runs `resolve-model-alias` (body rewrite) + `set-backend-authorization` (+ `path-builder` for Unified AI; or `rewrite-uri` for Azure OpenAI).
 
-> **Pre-stream only.** Once the response stream has started, the body is committed and cross-model fallback is not possible. Azure OpenAI and Universal LLM APIs do not implement cross-model fallback today — they perform pool-level retries against the resolved model only.
+> **Pre-stream only.** Once the response stream has started, the body is committed and cross-model fallback is not possible.
+
+### Compatible-pool-types filter on alias members
+
+Each API surface advertises `compatiblePoolTypes` — a CSV of pool types it can route to (set by `request-processor` for the Unified AI API based on the matched api-type, and set inline by the Universal LLM API and Azure OpenAI API policies). The alias resolution step applies this filter to the alias's `members[]` and skips any member whose underlying pools do not match. This means:
+
+- An alias `multi-cloud-chat` that includes `claude-haiku-4-5` (anthropic) + `gpt-4.1` (Azure OpenAI) + `openai.gpt-oss-120b` (aws-bedrock-mantle) called via **Universal LLM** (`/models/chat/completions`) considers only the Azure OpenAI and Bedrock-Mantle members — Anthropic native is filtered out because Universal LLM is OpenAI-compat-only.
+- The same alias called via **Unified AI native** `/claude/v1/messages` considers only the Anthropic member.
+- If the alias has no member compatible with the inbound surface, the request returns `400 alias_no_compatible_member` with the alias name, the surface's compatible CSV, and the total member count for diagnostics.
 
 ### Access Control
 
-The `validate-model-access` fragment runs **before** `resolve-model-alias`. The product policy's `allowedModels` therefore controls access to the **alias name** (the contract-level identifier the client sees), not the underlying real models. Granting `allowedModels = "adv-gpt"` exposes only the alias and keeps the underlying `gpt-5.4-mini` / `gpt-4.1` deployments unreachable through that subscription.
+The `validate-model-access` fragment runs **before** `set-target-backend-pool`. The product policy's `allowedModels` therefore controls access to the **alias name** (the contract-level identifier the client sees), not the underlying real models. Granting `allowedModels = "multi-cloud-claude"` exposes only the alias.
 
 ### Diagnostics
 
 | Source | Where to look |
 |---|---|
-| `original-model-alias`, `is-alias` | APIM trace policy (`Resolve-Model-Alias` source), `UAIG-*` debug headers (Unified AI when `enableResponseHeaders` is true) |
+| `original-model-alias`, `is-alias`, `alias-fallback-members` | APIM trace policy (`Set-Target-Backend-Pool` + `Alias-Fallback` sources), `UAIG-*` debug headers (Unified AI when `enableResponseHeaders` is true) |
 | Resolved model | `requestedModel` variable, `UAIG-Model-Id` header, App Insights `customDimensions.deploymentName` |
-| Cross-model fallback hops | `alias-retry-index` variable, repeated `set-target-backend-pool` traces |
+| Cross-model fallback hops | `alias-retry-index` variable + per-hop `Alias-Fallback` traces (one per fallback hop on every API surface) |
 
 ### Configuration
 
-Aliases are declared in the `modelAliases` array of the LLM Backend Onboarding `.bicepparam` file. Each onboarding deployment regenerates **both** the `metadata-config` JSON (for Unified AI) and the `resolve-model-alias` fragment's inline static map (for Azure OpenAI / Universal LLM) from the same source — keeping the two views in sync. See [LLM Backend Onboarding — Model Aliases](../bicep/infra/llm-backend-onboarding/README.md#model-aliases) for the full property reference and examples.
+Aliases are declared in the `modelAliases` array of the LLM Backend Onboarding `.bicepparam` file. Each onboarding deployment regenerates:
+
+| Output | Purpose |
+|---|---|
+| `set-backend-pools` virtual pool entries (in the `backendPools` JArray) | Runtime alias resolution + retry-time fallback walk. **Sole source of runtime data.** |
+| `get-available-models` JObject entries | First-class alias entries in `GET /deployments` responses. |
+| `metadata-config` (`model-aliases` JSON section) | Informational copy in the cached config (used by tooling that introspects the cache). |
+
+All three are regenerated on every deployment so the views stay in sync. See [LLM Backend Onboarding — Model Aliases](../bicep/infra/llm-backend-onboarding/README.md#model-aliases) for the full property reference, examples, and error-code reference.
 
 ## Backend Pool Types
 
@@ -759,7 +793,7 @@ api-key: <subscription-key>
 ### Unified AI API — Bedrock Pattern
 
 ```http
-POST APIM_GATEWAY/unified-ai/model/us.anthropic.claude-3-5-haiku-20241022-v1:0/converse
+POST APIM_GATEWAY/unified-ai/bedrock/model/us.anthropic.claude-3-5-haiku-20241022-v1:0/converse
 Content-Type: application/json
 api-key: <subscription-key>
 
@@ -780,13 +814,62 @@ api-key: <subscription-key>
 
 **Flow:**
 1. Load & cache metadata config
-2. Request processor detects api-type: `"bedrock"` (path contains `/model`)
-3. Extract model: `"us.anthropic.claude-3-5-haiku-20241022-v1:0"` from path segment
+2. Request processor detects api-type: `"bedrock-native"` (path begins with `/bedrock`); reads `compatible-pool-types: 'aws-bedrock'` from the api-type config
+3. Extract model: `"us.anthropic.claude-3-5-haiku-20241022-v1:0"` from the `/model/{id}/...` segment
 4. Security handler validates API key
-5. Find pool: `"bedrock-us-east-1"` or direct backend (shared fragment)
-6. Authenticate: AWS SigV4 using IAM access keys from named values
-7. Path builder constructs: `/model/us.anthropic.claude-3-5-haiku-20241022-v1%3A0/converse`
+5. Pool resolver filters pools to `poolType == 'aws-bedrock'` (the `compatiblePoolTypes` filter prevents `aws-bedrock-mantle` OpenAI-compat pools from being matched even if they share the model name) and picks `"bedrock-us-east-1"`
+6. Authenticate: AWS SigV4 (default) or `api-key-bearer` when the backend uses a Bedrock long-lived API key
+7. Path builder strips the `/bedrock` prefix, leaving `/model/us.anthropic.claude-3-5-haiku-20241022-v1%3A0/converse`
 8. Forward to Bedrock runtime endpoint
+
+### Unified AI API — Gemini Native Pattern
+
+```http
+POST APIM_GATEWAY/unified-ai/gemini/v1beta/models/gemini-2.5-flash:generateContent
+Content-Type: application/json
+api-key: <subscription-key>
+
+{
+  "contents": [
+    { "role": "user", "parts": [{ "text": "Hello" }] }
+  ],
+  "generationConfig": { "maxOutputTokens": 64 }
+}
+```
+
+**Flow:**
+1. Request processor detects api-type: `"gemini-native"` (path begins with `/gemini`); reads `compatible-pool-types: 'gemini'`
+2. Extract model from `/models/{model}:` segment of the path
+3. Pool resolver filters to `poolType == 'gemini'` and selects the matching backend
+4. Auth fragment sets `x-goog-api-key` from the named value referenced by the pool's `authConfigNamedValue` (and strips any inherited `Authorization` header)
+5. Path builder strips the `/gemini` prefix and forwards `/v1beta/models/gemini-2.5-flash:generateContent` unchanged
+6. Forward to `generativelanguage.googleapis.com`
+
+### Unified AI API — Anthropic Claude Native Pattern
+
+```http
+POST APIM_GATEWAY/unified-ai/claude/v1/messages
+Content-Type: application/json
+api-key: <subscription-key>
+
+{
+  "model": "claude-3-5-haiku-20241022",
+  "max_tokens": 64,
+  "messages": [{ "role": "user", "content": "Hello" }]
+}
+```
+
+**Flow:**
+1. Request processor detects api-type: `"claude-native"` (path begins with `/claude`); reads `compatible-pool-types: 'anthropic'`
+2. Extract model from request body (`body.model` — Anthropic Messages has no model in the URL)
+3. Pool resolver filters to `poolType == 'anthropic'`
+4. Auth fragment sets `x-api-key` from the named value referenced by the pool's `authConfigNamedValue` plus `anthropic-version` from the `{{anthropic-version}}` named value
+5. Path builder forces final path to `/v1/messages` and ensures the body's `model` field is populated from the resolved routing id
+6. Forward to `api.anthropic.com`
+
+### Pool isolation: `compatible-pool-types`
+
+Each api-type in `frag-metadata-config.xml` can declare a `compatible-pool-types` CSV. The pool resolver in `frag-set-target-backend-pool.xml` skips any pool whose `poolType` is not in that list **before** matching on model name. This is what lets the same model id appear in two pools — for example `claude-3-5-haiku-20241022` on both an `aws-bedrock` (native Converse) pool and an `aws-bedrock-mantle` (OpenAI-compat) pool — without requiring suffix tricks: `/bedrock/...` only routes to `aws-bedrock`, `/v1/chat/completions` (api-type `openai-compat`) only routes to `ai-foundry`, `azure-openai`, `aws-bedrock-mantle`, or `gemini-openai`.
 
 ### Unified AI API — Model Discovery
 

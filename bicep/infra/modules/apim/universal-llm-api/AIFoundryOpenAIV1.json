@@ -8,43 +8,14 @@
     },
     "version": "v1"
   },
-  "tags": [
-    {
-      "name": "Chat"
-    },
-    {
-      "name": "Containers"
-    },
-    {
-      "name": "Embeddings"
-    },
-    {
-      "name": "Evals"
-    },
-    {
-      "name": "Files"
-    },
-    {
-      "name": "Fine-tuning"
-    },
-    {
-      "name": "Models"
-    },
-    {
-      "name": "Responses"
-    },
-    {
-      "name": "Vector Stores"
-    }
-  ],
+  "tags": [],
   "paths": {
     "/deployments": {
       "get": {
         "summary": "List deployments",
         "operationId": "deployments",
         "description": "Get deployments for Azure OpenAI resource for Microsoft Foundry Integration",
-        "parameters": [
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "AI Foundry integration operations for retrieving available deployments",
@@ -80,25 +51,29 @@
       }
     },
     "/deployments/{deployment-id}": {
-        "get": {
-            "summary": "Get deployment by name",
-            "operationId": "deployment-by-name",
-            "description": "Get deployment details by deployment name for LLM resource for Microsoft Foundry Integration",
-            "parameters": [{
-                "name": "deployment-id",
-                "in": "path",
-                "required": true,
-                "schema": {
-                    "enum": [""],
-                    "type": ""
-                }
-            }],
-            "responses": {
-                "200": {
-                    "description": ""
-                }
+      "get": {
+        "summary": "Get deployment by name",
+        "operationId": "deployment-by-name",
+        "description": "Get deployment details by deployment name for LLM resource for Microsoft Foundry Integration",
+        "parameters": [
+          {
+            "name": "deployment-id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                ""
+              ],
+              "type": ""
             }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
         }
+      }
     },
     "/chat/completions": {
       "post": {
@@ -161,9 +136,6 @@
             }
           }
         },
-        "tags": [
-          "Chat"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -286,10 +258,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Containers"
-        ]
+        }
       },
       "post": {
         "operationId": "CreateContainer",
@@ -345,9 +314,6 @@
             }
           }
         },
-        "tags": [
-          "Containers"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -422,10 +388,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Containers"
-        ]
+        }
       },
       "delete": {
         "operationId": "DeleteContainer",
@@ -510,10 +473,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Containers"
-        ]
+        }
       }
     },
     "/containers/{container_id}/files": {
@@ -579,9 +539,6 @@
             }
           }
         },
-        "tags": [
-          "Containers"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -690,10 +647,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Containers"
-        ]
+        }
       }
     },
     "/containers/{container_id}/files/{file_id}": {
@@ -766,10 +720,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Containers"
-        ]
+        }
       },
       "delete": {
         "operationId": "DeleteContainerFile",
@@ -862,10 +813,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Containers"
-        ]
+        }
       }
     },
     "/containers/{container_id}/files/{file_id}/content": {
@@ -939,10 +887,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Containers"
-        ]
+        }
       }
     },
     "/embeddings": {
@@ -1001,9 +946,6 @@
             }
           }
         },
-        "tags": [
-          "Embeddings"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1144,10 +1086,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Evals"
-        ]
+        }
       },
       "post": {
         "operationId": "createEval",
@@ -1216,9 +1155,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1348,10 +1284,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Evals"
-        ]
+        }
       },
       "post": {
         "operationId": "updateEval",
@@ -1428,9 +1361,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1545,9 +1475,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "summary": "Delete a specified evaluation."
       }
     },
@@ -1677,10 +1604,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Evals"
-        ]
+        }
       },
       "post": {
         "operationId": "createEvalRun",
@@ -1757,9 +1681,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1857,9 +1778,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "summary": "Retrieve a specific evaluation run by its ID."
       },
       "post": {
@@ -1945,9 +1863,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "summary": "Cancel a specific evaluation run by its ID."
       },
       "delete": {
@@ -2052,9 +1967,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "summary": "Delete a specific evaluation run by its ID."
       }
     },
@@ -2189,9 +2101,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "summary": "Get a list of output items for a specified evaluation run."
       }
     },
@@ -2287,9 +2196,6 @@
             }
           }
         },
-        "tags": [
-          "Evals"
-        ],
         "summary": "Retrieve a specific output item from an evaluation run by its ID."
       }
     },
@@ -2348,9 +2254,6 @@
             }
           }
         },
-        "tags": [
-          "Files"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2429,10 +2332,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Files"
-        ]
+        }
       }
     },
     "/files/{file_id}": {
@@ -2498,10 +2398,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Files"
-        ]
+        }
       },
       "delete": {
         "operationId": "deleteFile",
@@ -2565,10 +2462,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Files"
-        ]
+        }
       }
     },
     "/files/{file_id}/content": {
@@ -2635,10 +2529,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Files"
-        ]
+        }
       }
     },
     "/fine_tuning/alpha/graders/run": {
@@ -2688,9 +2579,6 @@
             }
           }
         },
-        "tags": [
-          "Fine-tuning"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2750,9 +2638,6 @@
             }
           }
         },
-        "tags": [
-          "Fine-tuning"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2821,9 +2706,6 @@
             }
           }
         },
-        "tags": [
-          "Fine-tuning"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2911,10 +2793,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Fine-tuning"
-        ]
+        }
       }
     },
     "/fine_tuning/jobs/{fine_tuning_job_id}": {
@@ -2981,10 +2860,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Fine-tuning"
-        ]
+        }
       }
     },
     "/fine_tuning/jobs/{fine_tuning_job_id}/cancel": {
@@ -3051,10 +2927,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Fine-tuning"
-        ]
+        }
       }
     },
     "/fine_tuning/jobs/{fine_tuning_job_id}/checkpoints": {
@@ -3143,10 +3016,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Fine-tuning"
-        ]
+        }
       }
     },
     "/fine_tuning/jobs/{fine_tuning_job_id}/checkpoints/{fine_tuning_checkpoint_id}/copy": {
@@ -3244,9 +3114,6 @@
             }
           }
         },
-        "tags": [
-          "Fine-tuning"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3353,9 +3220,6 @@
             }
           }
         },
-        "tags": [
-          "Fine-tuning"
-        ],
         "summary": "Gets the status of a fine-tuning checkpoint copy."
       }
     },
@@ -3445,10 +3309,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Fine-tuning"
-        ]
+        }
       }
     },
     "/fine_tuning/jobs/{fine_tuning_job_id}/pause": {
@@ -3515,10 +3376,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Fine-tuning"
-        ]
+        }
       }
     },
     "/fine_tuning/jobs/{fine_tuning_job_id}/resume": {
@@ -3585,10 +3443,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Fine-tuning"
-        ]
+        }
       }
     },
     "/models": {
@@ -3646,10 +3501,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Models"
-        ]
+        }
       }
     },
     "/models/{model}": {
@@ -3716,10 +3568,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Models"
-        ]
+        }
       }
     },
     "/responses": {
@@ -3783,9 +3632,6 @@
             }
           }
         },
-        "tags": [
-          "Responses"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3896,9 +3742,6 @@
             }
           }
         },
-        "tags": [
-          "Responses"
-        ],
         "summary": "Retrieves a model response with the given ID."
       },
       "delete": {
@@ -3986,9 +3829,6 @@
             }
           }
         },
-        "tags": [
-          "Responses"
-        ],
         "summary": "Deletes a response by ID."
       }
     },
@@ -4102,9 +3942,6 @@
             }
           }
         },
-        "tags": [
-          "Responses"
-        ],
         "summary": "Returns a list of input items for a given response."
       }
     },
@@ -4209,10 +4046,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       },
       "post": {
         "operationId": "createVectorStore",
@@ -4269,9 +4103,6 @@
             }
           }
         },
-        "tags": [
-          "Vector Stores"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4353,10 +4184,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       },
       "post": {
         "operationId": "modifyVectorStore",
@@ -4422,9 +4250,6 @@
             }
           }
         },
-        "tags": [
-          "Vector Stores"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4499,10 +4324,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       }
     },
     "/vector_stores/{vector_store_id}/file_batches": {
@@ -4570,9 +4392,6 @@
             }
           }
         },
-        "tags": [
-          "Vector Stores"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4658,10 +4477,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       }
     },
     "/vector_stores/{vector_store_id}/file_batches/{batch_id}/cancel": {
@@ -4737,10 +4553,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       }
     },
     "/vector_stores/{vector_store_id}/file_batches/{batch_id}/files": {
@@ -4872,10 +4685,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       }
     },
     "/vector_stores/{vector_store_id}/files": {
@@ -4998,10 +4808,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       },
       "post": {
         "operationId": "createVectorStoreFile",
@@ -5067,9 +4874,6 @@
             }
           }
         },
-        "tags": [
-          "Vector Stores"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -5155,10 +4959,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       },
       "post": {
         "operationId": "updateVectorStoreFileAttributes",
@@ -5230,9 +5031,6 @@
             }
           }
         },
-        "tags": [
-          "Vector Stores"
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -5316,10 +5114,7 @@
               }
             }
           }
-        },
-        "tags": [
-          "Vector Stores"
-        ]
+        }
       }
     }
   },

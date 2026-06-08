@@ -50,8 +50,8 @@ The `openai-compat` API type uses **backend-path-templates** to dynamically cons
 
 | Backend Type | Client Path | Backend Path |
 |---|---|---|
-| `ai-foundry` | `/v1/chat/completions` | `/openai/deployments/{model}/chat/completions` |
-| `azure-openai` | `/v1/chat/completions` | `/openai/deployments/{model}/chat/completions` |
+| `ai-foundry` | `/v1/chat/completions` | `/openai/v1/chat/completions` (model in body) |
+| `azure-openai` | `/v1/chat/completions` | `/openai/v1/chat/completions` (model in body) |
 | `aws-bedrock-mantle` | `/v1/chat/completions` | `/v1/chat/completions` |
 | `gemini-openai` | `/v1/chat/completions` | `/v1beta/openai/chat/completions` |
 | `aws-bedrock` | `/v1/chat/completions` | `/model/{model}/converse` |
