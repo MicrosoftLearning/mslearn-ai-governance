@@ -333,6 +333,9 @@ module llmBackends './llm-backends.bicep' = {
     configureCircuitBreaker: true
     tags: tags
   }
+  dependsOn: [
+    policyFragments
+  ]
 }
 
 /**
@@ -363,6 +366,9 @@ module llmPolicyFragments './llm-policy-fragments.bicep' =  {
     managedIdentityClientId: managedIdentity.properties.clientId
     llmBackendConfig: llmBackendConfig
   }
+  dependsOn: [
+    policyFragments
+  ]
 }
 
 resource redisCache 'Microsoft.ApiManagement/service/caches@2024-06-01-preview' = if (enableRedisCache) {
