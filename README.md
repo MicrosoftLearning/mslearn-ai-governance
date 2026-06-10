@@ -35,7 +35,7 @@ The **AI Citadel Blueprint** is a unified, layered approach to AI security and c
 | 🟢 **Layer 3** | **Agent Identity** | Agent identity & lifecycle governance and security — unique agent identities, blueprints, shadow agent detection, sponsorship model, access packages | [Governing Agent Identities with Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/) |
 | 🛡️ **Layer 4** | **Security Fabric** | Unified protection — `Microsoft Defender` for AI threat intelligence, `Purview` for data governance, `Entra` for authentication and authorization | Microsoft Defender, Purview & Entra |
 
-The layers are not isolated silos — they form an integrated architecture grounded in the principle of **separation of concerns with unified oversight**. 
+The layers are not isolated silos — they form an integrated architecture grounded in the principle of **separation of concerns with unified oversight**.
 
 **Layer 1: Governance Hub** (this accelerator) acts as the runtime gateway through a hub-and-spoke deployment where a centrally managed AI gateway (Azure API Management) enforces runtime policies, while spoke environments (layer 2: Agent Operations) give each business unit autonomous development within guardrails.
 Adding **Layer 3: Agent Identity** ensures that every agent has a unique, governable identity, while **Layer 4: Security Fabric** provides unified threat protection and data governance across the entire architecture.
@@ -79,7 +79,7 @@ Below is a high-level overview of the two supported deployment approaches:
 
 #### Part of spoke network (peered to a hub VNet in the connectivity subscription)
 
-In this approach, the Citadel Governance Hub is deployed within a dedicated spoke VNet that connects to the hub VNet via VNet peering. 
+In this approach, the Citadel Governance Hub is deployed within a dedicated spoke VNet that connects to the hub VNet via VNet peering.
 
 Agentic workloads in other spokes are routed first to the hub network firewall through direct peering, then forwarded to the Citadel Governance Hub gateway network.
 
