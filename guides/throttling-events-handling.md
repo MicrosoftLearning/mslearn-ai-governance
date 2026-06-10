@@ -9,20 +9,24 @@ In either case, it might be very important to keep an eye on these events especi
 
 AI Hub Gateway provides a mechanism that allows you to monitor these events per use case (product), per AI deployment/service and among other dimensions so you can take measures to address these events.
 
-A policy fragment [throttling-events](../infra/modules/apim/policies/frag-throttling-events.xml) is used to raise Application Insights custom metrics for throttling events.
+A policy fragment [raise-throttling-events](../bicep/infra/modules/apim/policies/frag-raise-throttling-events.xml) is used to raise Application Insights custom metrics for throttling events.
 
 ```xml
 <fragment>
     <choose>
         <when condition="@(context.Response.StatusCode == 429)">
             <emit-metric name="AI Throttling" value="1" namespace="throttling-events">
-                <dimension name="API ID" />
+                <!-- ID of the operation being used -->
                 <dimension name="Operation ID" />
-                <!-- <dimension name="Subscription ID" /> -->
-                <dimension name="Location" />
-                <dimension name="Product Name" value="@(context.Product?.Name?.ToString() ?? "Portal-Admin")" />
-                <dimension name="Deployment Name" value="@((string)context.Variables["target-deployment"])" />
-                <dimension name="Service Name" value="@((string)context.Variables["service-name"] ?? "NA")" />
+
+                <!-- Use case or agentic platform name-->
+                <dimension name="productName" value="@(context.Product?.Name?.ToString() ?? "Portal-Admin")" />
+                
+                <!-- Target model or deployment name -->
+                <dimension name="deploymentName" value="@((string)context.Variables.GetValueOrDefault<string>("requestedModel", "DefaultModel"))" />
+                
+                <!-- This can be your agent Id or APIM subscription id-->
+                <dimension name="appId" value="@((string)context.Variables.GetValueOrDefault<string>("appId", context.Subscription?.Id ?? "Portal-Admin-Sub"))" />
             </emit-metric>
         </when>
     </choose>

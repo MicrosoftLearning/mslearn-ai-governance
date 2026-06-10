@@ -18,6 +18,8 @@ The PII handling framework has been enhanced with the following key features:
 
 4. **Event Hub Logging**: Comprehensive logging to Event Hub for auditing, compliance, and testing.
 
+5. **PII Blocking**: New capability to completely block requests containing PII data with a 400 Bad Request response, useful for strict compliance scenarios where no PII should reach backend services.
+
 ## Process Flow
 
 ```mermaid
@@ -469,6 +471,153 @@ This fragment logs PII anonymization and deanonymization activity to an Event Hu
 </fragment>
 ```
 
+4. **pii-detection** policy fragment:
+
+This policy fragment is used for PII detection only (without anonymization). It detects PII in the request and sets variables that can be used to block requests containing PII data. This is useful when you want to reject requests containing sensitive information rather than anonymizing them.
+
+The fragment uses the same Azure AI Language Service and configuration options as the anonymization fragment but only performs detection. It sets the following output variables:
+
+- `piiDetected`: Boolean indicating whether PII was detected in the request
+- `piiDetectedEntities`: Comma-separated list of detected PII categories
+
+This policy fragment expects the following variables to be set:
+
+- `piiConfidenceThreshold`: The confidence score threshold for PII entity detection (default is 0.8).
+- `piiEntityCategoryExclusions`: A comma-separated list of PII entity categories to exclude from detection.
+- `piiInputContent`: The input content to check for PII.
+- `piiDetectionLanguage`: The language used for PII detection (default is "en"). Use "auto" for multilingual content.
+- `piiRegexPatterns`: Optional JSON array of custom regex patterns for PII detection.
+
+```xml
+<fragment>
+    <!-- PII Detection (without anonymization) -->
+    <!-- Get access token for PII service using managed identity -->
+    <authentication-managed-identity resource="https://cognitiveservices.azure.com" client-id="{{uami-client-id}}" output-token-variable-name="pii-auth-token" ignore-error="false" />
+    
+    <!-- Apply regex patterns first for custom PII detection -->
+    <set-variable name="regexPiiMatches" value="@{
+        var content = context.Variables.GetValueOrDefault<string>("piiInputContent");
+        var patternsJson = context.Variables.GetValueOrDefault<string>("piiRegexPatterns", "[]");
+        var matches = new JArray();
+        
+        if (!string.IsNullOrEmpty(patternsJson) && patternsJson != "[]") {
+            var patterns = JArray.Parse(patternsJson);
+            foreach (var patternObj in patterns) {
+                var pattern = patternObj["pattern"].ToString();
+                var category = patternObj["category"].ToString();
+                var regex = new System.Text.RegularExpressions.Regex(pattern);
+                var regexMatches = regex.Matches(content);
+                foreach (System.Text.RegularExpressions.Match match in regexMatches) {
+                    matches.Add(new JObject {
+                        ["text"] = match.Value,
+                        ["category"] = category,
+                        ["confidenceScore"] = 1.0
+                    });
+                }
+            }
+        }
+        return matches.ToString();
+    }" />
+    
+    <!-- Call PII detection API -->
+    <send-request mode="new" response-variable-name="piiAnalysisResponse" timeout="10" ignore-error="false">
+        <set-url>@($"{{{{piiServiceUrl}}}}/language/:analyze-text?api-version=2022-05-01")</set-url>
+        <set-method>POST</set-method>
+        <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+        </set-header>
+        <set-header name="Authorization" exists-action="override">
+            <value>@($"Bearer {context.Variables["pii-auth-token"]}")</value>
+        </set-header>
+        <set-body>@{
+            var content = context.Variables.GetValueOrDefault<string>("piiInputContent");
+            var language = context.Variables.GetValueOrDefault<string>("piiDetectionLanguage", "en");
+            var exclusions = context.Variables.GetValueOrDefault<string>("piiEntityCategoryExclusions", "PersonType")
+                .Split(',').Select(e => e.Trim()).ToArray();
+            
+            var request = new JObject {
+                ["kind"] = "PiiEntityRecognition",
+                ["parameters"] = new JObject {
+                    ["modelVersion"] = "latest",
+                    ["piiCategories"] = new JArray(exclusions.Select(e => new JValue(e)))
+                },
+                ["analysisInput"] = new JObject {
+                    ["documents"] = new JArray {
+                        new JObject {
+                            ["text"] = content,
+                            ["id"] = "1",
+                            ["language"] = language == "auto" ? "en" : language
+                        }
+                    }
+                }
+            };
+            return request.ToString();
+        }</set-body>
+    </send-request>
+    
+    <!-- Process PII Analysis Response and determine if PII was detected -->
+    <set-variable name="piiDetected" value="@{
+        var response = context.Variables.GetValueOrDefault<IResponse>("piiAnalysisResponse");
+        if (response == null || response.StatusCode != 200) {
+            return false;
+        }
+        
+        var body = response.Body.As<JObject>(preserveContent: true);
+        var entities = body["results"]?["documents"]?[0]?["entities"] as JArray ?? new JArray();
+        var threshold = double.Parse(context.Variables.GetValueOrDefault<string>("piiConfidenceThreshold", "0.8"));
+        var exclusions = context.Variables.GetValueOrDefault<string>("piiEntityCategoryExclusions", "PersonType")
+            .Split(',').Select(e => e.Trim().ToLowerInvariant()).ToArray();
+        
+        // Check NLP detected entities
+        foreach (var entity in entities) {
+            var confidence = entity["confidenceScore"]?.Value<double>() ?? 0;
+            var category = entity["category"]?.ToString()?.ToLowerInvariant() ?? "";
+            if (confidence >= threshold && !exclusions.Contains(category)) {
+                return true;
+            }
+        }
+        
+        // Check regex matches
+        var regexMatches = JArray.Parse(context.Variables.GetValueOrDefault<string>("regexPiiMatches", "[]"));
+        if (regexMatches.Count > 0) {
+            return true;
+        }
+        
+        return false;
+    }" />
+    
+    <!-- Build list of detected PII categories -->
+    <set-variable name="piiDetectedEntities" value="@{
+        var categories = new HashSet<string>();
+        var response = context.Variables.GetValueOrDefault<IResponse>("piiAnalysisResponse");
+        
+        if (response != null && response.StatusCode == 200) {
+            var body = response.Body.As<JObject>(preserveContent: true);
+            var entities = body["results"]?["documents"]?[0]?["entities"] as JArray ?? new JArray();
+            var threshold = double.Parse(context.Variables.GetValueOrDefault<string>("piiConfidenceThreshold", "0.8"));
+            var exclusions = context.Variables.GetValueOrDefault<string>("piiEntityCategoryExclusions", "PersonType")
+                .Split(',').Select(e => e.Trim().ToLowerInvariant()).ToArray();
+            
+            foreach (var entity in entities) {
+                var confidence = entity["confidenceScore"]?.Value<double>() ?? 0;
+                var category = entity["category"]?.ToString() ?? "";
+                if (confidence >= threshold && !exclusions.Contains(category.ToLowerInvariant())) {
+                    categories.Add(category);
+                }
+            }
+        }
+        
+        // Add regex match categories
+        var regexMatches = JArray.Parse(context.Variables.GetValueOrDefault<string>("regexPiiMatches", "[]"));
+        foreach (var match in regexMatches) {
+            categories.Add(match["category"]?.ToString() ?? "Custom");
+        }
+        
+        return string.Join(", ", categories);
+    }" />
+</fragment>
+```
+
 ### Determining the scope of PII anonymization and deanonymization
 
 To implement the above policy fragments, they need to be referenced in the target API in APIM.
@@ -729,6 +878,103 @@ The final response send back the client after deanonymization will be:
 }
 ```
     
+### PII Blocking Product Policy Example
+
+In some scenarios, you may want to completely block requests that contain PII data rather than anonymizing them. This is useful for strict compliance requirements where no PII should reach the backend services under any circumstances.
+
+The following example shows how to implement PII blocking at the Product level:
+
+```xml
+<policies>
+    <inbound>
+        <base />
+
+        ... other policies ...
+
+        <!-- PII Detection and Blocking -->
+        <set-variable name="piiBlockingEnabled" value="true" />
+        <!-- Variables required by pii-detection fragment -->
+        <choose>
+            <when condition="@(context.Variables.GetValueOrDefault<string>("piiBlockingEnabled") == "true")">
+                
+                <!-- Configure PII detection settings -->
+                <set-variable name="piiConfidenceThreshold" value="0.75" />
+                <set-variable name="piiEntityCategoryExclusions" value="PersonType,CADriversLicenseNumber" />
+                <set-variable name="piiDetectionLanguage" value="en" /> <!-- Use 'auto' if context have multiple languages -->
+
+                <!-- Configure regex patterns for custom PII detection -->
+                <set-variable name="piiRegexPatterns" value="@{
+                    var patterns = new JArray {
+                        new JObject {
+                            ["pattern"] = @"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b",
+                            ["category"] = "CREDIT_CARD"
+                        },
+                        new JObject {
+                            ["pattern"] = @"\b[A-Z]{2}\d{6}[A-Z]\b",
+                            ["category"] = "PASSPORT_NUMBER"
+                        },
+                        new JObject {
+                            ["pattern"] = @"\b\d{3}[-]?\d{4}[-]?\d{7}[-]?\d{1}\b",
+                            ["category"] = "NATIONAL_ID"
+                        }
+                    };
+                    return patterns.ToString();
+                }" />
+                <set-variable name="piiInputContent" value="@(context.Request.Body.As<string>(preserveContent: true))" />
+                <!-- Include the PII detection fragment -->
+                <include-fragment fragment-id="pii-detection" />
+                <!-- Block request if PII is detected -->
+                <choose>
+                    <when condition="@(context.Variables.GetValueOrDefault<bool>("piiDetected", false))">
+                        <return-response>
+                            <set-status code="400" reason="Bad Request" />
+                            <set-header name="Content-Type" exists-action="override">
+                                <value>application/json</value>
+                            </set-header>
+                            <set-body>@{
+                                var detectedEntities = context.Variables.GetValueOrDefault<string>("piiDetectedEntities", "");
+                                return new JObject(
+                                    new JProperty("error", new JObject(
+                                        new JProperty("code", "PII_DETECTED"),
+                                        new JProperty("message", "Request blocked: Personal Identifiable Information (PII) detected in the request."),
+                                        new JProperty("detectedCategories", detectedEntities)
+                                    ))
+                                ).ToString();
+                            }</set-body>
+                        </return-response>
+                    </when>
+                </choose>
+            </when>
+        </choose>
+        <!-- End of PII Detection and Blocking -->
+
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
+```
+
+When PII is detected in a request, the API will return a 400 Bad Request response with details about the detected PII categories:
+
+```json
+{
+    "error": {
+        "code": "PII_DETECTED",
+        "message": "Request blocked: Personal Identifiable Information (PII) detected in the request.",
+        "detectedCategories": "Email, Person, PhoneNumber, InternationalBankingAccountNumber"
+    }
+}
+```
+
+> **NOTE:** The PII blocking approach is more restrictive than anonymization. Use this when your compliance requirements prohibit any PII from being processed by backend services, even in anonymized form.
+
 ## Conclusion
 
 Using APIM to handle PII anonymization and deanonymization requests transparently for API requests that may contain PII data is a powerful way to ensure that sensitive data is protected while still allowing for the processing of requests. By using the above approach, you can ensure that PII data is handled securely and efficiently in your APIs.
