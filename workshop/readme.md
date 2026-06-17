@@ -530,6 +530,70 @@ The workshop includes a subset of validation notebooks. Execute them in this ord
 
 > **Lab context:** For the purposes of this lab, the same backends that were already provisioned by `azd up` will be re-provisioned through the notebook. In a real-world scenario, you would first provision new backends (e.g. a new AI Foundry account) and then use this notebook to register them with APIM. Note that all backends must be included in a single provisioning run — if only one new backend is added via the notebook, previously registered backends will be removed. For example, if `backend1` and `backend2` are already registered and you want to add `backend3`, all three must be specified in the notebook.
 
+#### Optional Notebooks (7–9)
+
+The following three notebooks are **optional** and can be run after notebooks 1–6. They are net-new labs and do not have equivalent notebooks in the `validation/` folder. Unless noted, they share the same pre-requisites as notebooks 1–6 (deployed hub + spoke, Azure CLI login, workshop Python environment).
+
+<details>
+<summary><strong>7. Citadel Hosted Agent with AGT</strong> — build, deploy, and govern a Foundry hosted agent</summary>
+
+| | |
+|---|---|
+| **Notebook** | [`7. citadel-hosted-agent-with-agt.ipynb`](7.%20citadel-hosted-agent-with-agt.ipynb) |
+| **Extra pre-reqs** | None beyond the standard notebooks 1–6 pre-requisites |
+
+Builds a **Foundry Hosted Agent** for a Contoso HR scenario, governed end-to-end with the **Microsoft Agent Governance Toolkit (AGT)**. The notebook generates the agent source, builds and pushes the container image with `az acr build` (no local Docker), deploys it as a hosted agent version to the spoke Foundry project, assigns the required RBAC, and tests it end-to-end — including governance enforcement (PII/SSN blocking, third-party salary lookups, destructive-tool denial), multi-turn conversations, and streaming responses. AGT policy and audit decisions are exported to Application Insights.
+
+</details>
+
+<details>
+<summary><strong>8. Publish and Use an A2A Endpoint</strong> — expose a Foundry agent as a governed Agent-to-Agent endpoint</summary>
+
+| | |
+|---|---|
+| **Notebook** | [`8. publish-and-use-a2a-endpoint.ipynb`](8.%20publish-and-use-a2a-endpoint.ipynb) |
+| **Extra pre-reqs** | None beyond the standard notebooks 1–6 pre-requisites |
+
+Walks through the full lifecycle of running an HR **prompt agent** on Microsoft Foundry, enabling its incoming **Agent-to-Agent (A2A)** endpoint, verifying the agent card, and publishing it through the Citadel Governance Hub (APIM) as a governed **access contract** (product + subscription). It then calls the agent through APIM with only a subscription key — proving APIM reaches the agent over its private endpoint even with public network access disabled. Everything is resolved from your current `azd` environment, so no resource names are hardcoded.
+
+</details>
+
+<details>
+<summary><strong>9. Publish and Use the HR MCP via APIM</strong> — publish and consume an HR MCP server through APIM (requires setup scripts)</summary>
+
+| | |
+|---|---|
+| **Notebook** | [`9. publish-and-use-hr-mcp-via-apim.ipynb`](9.%20publish-and-use-hr-mcp-via-apim.ipynb) |
+| **Extra pre-reqs** | The HR MCP server must be deployed and published first (see steps below) |
+
+Demonstrates the HR **Model Context Protocol (MCP)** server through **Azure API Management only**. It validates the Citadel-style APIM access contract, exercises MCP protocol/tool calls, demonstrates the APIM `5 tools/call per 30 seconds` rate-limit policy, inspects APIM logs, and deploys a Foundry hosted agent whose tools come from the APIM-published MCP endpoint. Everything required to run this notebook lives in the `mcp-hr/` folder.
+
+**Pre-requisite setup** — before running the notebook, run the scripts in [`mcp-hr/scripts/`](mcp-hr/scripts/) in this order (use the `.sh` scripts on macOS/Linux, `.ps1` on Windows). Run them from the `workshop/` folder with Azure CLI logged in:
+
+1. **Deploy the MCP server** — provisions the Container Apps host, ACR, telemetry, and Entra auth settings:
+   ```bash
+   # macOS/Linux
+   bash ./mcp-hr/scripts/deploy-hr-mcp.sh
+   # Windows
+   pwsh -File ./mcp-hr/scripts/deploy-hr-mcp.ps1
+   ```
+2. **Publish to APIM** — creates the APIM MCP API, backend, Citadel product, subscription, and policies:
+   ```bash
+   # macOS/Linux
+   bash ./mcp-hr/scripts/publish-hr-mcp-apim.sh
+   # Windows
+   pwsh -File ./mcp-hr/scripts/publish-hr-mcp-apim.ps1
+   ```
+3. **Validate** — run the two test scripts to confirm direct and APIM-mediated access work:
+   ```bash
+   uv run python ./mcp-hr/scripts/test-hr-mcp-direct.py
+   uv run python ./mcp-hr/scripts/test-hr-mcp-apim.py
+   ```
+
+Once these scripts complete successfully, run the notebook.
+
+</details>
+
 ### 5.5 Running Notebooks — Tips
 
 - ✅ **Run All is fine** — you can use **Run All** to execute the entire notebook, but review the output of each cell afterwards to understand what happened
@@ -735,7 +799,37 @@ You can now visualize the data in Cosmos DB using the provided Power BI template
 
 ## 7. Clean Up
 
-After the workshop, remove all deployed resources to avoid ongoing costs:
+After the workshop, remove all deployed resources to avoid ongoing costs. Perform these steps **in order** — tear down the optional MCP lab resources first, then the Citadel hub, then any spokes.
+
+### 7.1 Tear Down MCP Lab Resources (only if you ran optional notebook 9)
+
+If you ran optional notebook 9 (HR MCP via APIM), tear down the HR MCP resources **before** running `azd down` for the Citadel hub. The MCP deployment creates resources inside the shared hub VNet (a dedicated ACA subnet, private DNS zone link, etc.), so removing them first avoids leaving orphaned dependencies that can block hub deletion. Run the teardown script from the `workshop/` folder:
+
+<details>
+<summary>💻 Bash</summary>
+
+```bash
+bash ./mcp-hr/scripts/teardown-hr-mcp.sh
+```
+
+</details>
+
+<details>
+<summary>🪟 PowerShell</summary>
+
+```powershell
+pwsh -File ./mcp-hr/scripts/teardown-hr-mcp.ps1
+```
+
+</details>
+
+The teardown is best-effort and idempotent — resources that are already gone are skipped.
+
+> ⏭️ **Skip this step** if you did not run notebook 9.
+
+### 7.2 Tear Down the Citadel Hub (`azd down`)
+
+Remove the hub resources that were deployed via `azd up`:
 
 ```bash
 # This will delete ALL resources in the resource group and purge soft-deleted resources
@@ -746,7 +840,15 @@ azd down --purge --force
 
 > ⚠️ **Important:** The `--purge` flag ensures soft-deleted resources (Key Vault, Cognitive Services) are permanently removed. The `--force` flag skips confirmation prompts.
 
-> ⚠️ **Spoke cleanup required:** `azd down` only removes the hub resources that were deployed via `azd up`. You must also manually delete any **spoke resource groups** in the Azure Portal because they were deployed separately by script.
+### 7.3 Tear Down the Spoke(s) (via Azure Portal)
+
+`azd down` only removes the hub resources that were deployed via `azd up`. You must also manually delete any **spoke resource groups** in the Azure Portal because they were deployed separately by script.
+
+1. Go to [portal.azure.com](https://portal.azure.com)
+2. Locate each spoke resource group (e.g. `rg-citadel-demo-1-spoke-1`)
+3. Delete the resource group
+
+### 7.4 Verify Cleanup
 
 Verify in the Azure Portal that the hub resource group and any spoke resource groups have been deleted.
 
