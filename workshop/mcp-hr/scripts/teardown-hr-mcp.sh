@@ -30,7 +30,9 @@ Usage: teardown-hr-mcp.sh [options]
 
 Removes the HR MCP infrastructure resource group, its APIM publication objects
 (subscription, product, API, backend), and the per-deployment private DNS zone,
-then clears HR_MCP_* values from the active azd environment.
+then clears HR_MCP_* values from the active azd environment. If deploy-hr-mcp
+expanded the Citadel hub VNet (HR_MCP_ACA_ADDED_VNET_PREFIX), that added address
+space is removed after the dedicated subnet is deleted.
 
 Options:
   -y, --yes          Do not prompt for confirmation.
@@ -39,7 +41,7 @@ Options:
       --skip-apim    Do not touch the APIM publication objects.
       --skip-dns     Do not touch the private DNS zone.
       --skip-rg      Do not delete the HR MCP infrastructure resource group.
-      --skip-subnet  Do not delete the dedicated ACA subnet in the Citadel hub VNet.
+      --skip-subnet  Do not delete the dedicated ACA subnet (and added VNet address space).
   -h, --help         Show this help.
 EOF
 }
@@ -88,6 +90,9 @@ subnet_id="$(first_non_empty "${HR_MCP_ACA_SUBNET_ID:-}" "$(azd_get_optional HR_
 hub_rg="$(first_non_empty "${HR_MCP_CITADEL_RESOURCE_GROUP:-}" "$(azd_get_optional HR_MCP_CITADEL_RESOURCE_GROUP)")"
 vnet_name="$(first_non_empty "${HR_MCP_CITADEL_VNET_NAME:-}" "$(azd_get_optional HR_MCP_CITADEL_VNET_NAME)")"
 subnet_name="$(first_non_empty "${HR_MCP_ACA_SUBNET_NAME:-}" "$(azd_get_optional HR_MCP_ACA_SUBNET_NAME)")"
+# Address prefix deploy-hr-mcp added to the hub VNet when no free subnet was available.
+# It is removed only after the dedicated subnet is gone, leaving the original space intact.
+added_vnet_prefix="$(first_non_empty "${HR_MCP_ACA_ADDED_VNET_PREFIX:-}" "$(azd_get_optional HR_MCP_ACA_ADDED_VNET_PREFIX)")"
 if [[ -n "$subnet_id" ]]; then
   [[ -n "$hub_rg" ]] || hub_rg="$(printf '%s' "$subnet_id" | sed -E 's#.*/resourceGroups/([^/]+)/.*#\1#')"
   [[ -n "$vnet_name" ]] || vnet_name="$(printf '%s' "$subnet_id" | sed -E 's#.*/virtualNetworks/([^/]+)/.*#\1#')"
@@ -125,6 +130,9 @@ if [[ "$skip_subnet" == true ]]; then
   note 'ACA hub subnet:          SKIPPED (--skip-subnet)'
 elif [[ -n "$hub_rg" && -n "$vnet_name" && -n "$subnet_name" ]]; then
   note "ACA hub subnet:          $subnet_name in $vnet_name ($hub_rg)"
+  if [[ -n "$added_vnet_prefix" ]]; then
+    note "Added VNet address space: $added_vnet_prefix (REMOVE after subnet)"
+  fi
 else
   note 'ACA hub subnet:          SKIPPED (subnet/VNet not resolved)'
 fi
@@ -213,6 +221,38 @@ if [[ "$skip_subnet" != true && -n "$hub_rg" && -n "$vnet_name" && -n "$subnet_n
       log "Deleting ACA subnet '$subnet_name' from Citadel hub VNet '$vnet_name'"
       if az network vnet subnet delete --resource-group "$hub_rg" --vnet-name "$vnet_name" --name "$subnet_name" --only-show-errors -o none >/dev/null 2>&1; then
         note "Deleted subnet '$subnet_name'"
+        # Subnet is gone; now remove the address prefix deploy added (if any), but only
+        # when no other subnet still sits inside it, so we never shrink space in use.
+        if [[ -n "$added_vnet_prefix" ]]; then
+          vnet_json="$(az network vnet show --resource-group "$hub_rg" --name "$vnet_name" \
+            --query '{addressPrefixes:addressSpace.addressPrefixes,subnetPrefixes:subnets[].addressPrefix}' -o json 2>/dev/null || true)"
+          remove_index="$(python3 - "$added_vnet_prefix" "$vnet_json" <<'PY'
+import ipaddress, json, sys
+target = ipaddress.ip_network(sys.argv[1], strict=False)
+data = json.loads(sys.argv[2] or "{}")
+prefixes = [p for p in (data.get("addressPrefixes") or []) if p]
+subnets = [p for p in (data.get("subnetPrefixes") or []) if p]
+# Refuse to remove if any remaining subnet still lives inside the added prefix.
+for s in subnets:
+    if ipaddress.ip_network(s, strict=False).subnet_of(target):
+        print("INUSE"); raise SystemExit(0)
+for i, p in enumerate(prefixes):
+    if ipaddress.ip_network(p, strict=False) == target:
+        print(i); raise SystemExit(0)
+print("ABSENT")
+PY
+)"
+          if [[ "$remove_index" == "INUSE" ]]; then
+            note "Address prefix '$added_vnet_prefix' still has subnets; leaving it on the VNet."
+          elif [[ "$remove_index" == "ABSENT" || -z "$remove_index" ]]; then
+            note "Address prefix '$added_vnet_prefix' already absent from VNet (continuing)."
+          elif az network vnet update --resource-group "$hub_rg" --name "$vnet_name" \
+              --remove "addressSpace.addressPrefixes" "$remove_index" --only-show-errors -o none >/dev/null 2>&1; then
+            note "Removed added VNet address space '$added_vnet_prefix'"
+          else
+            warn "Could not remove added VNet address space '$added_vnet_prefix' (continuing). Remove it manually if no longer needed."
+          fi
+        fi
       else
         warn "Could not delete subnet '$subnet_name'. It may still be in use by the ACA environment; rerun this script once '$mcp_rg' has finished deleting."
       fi

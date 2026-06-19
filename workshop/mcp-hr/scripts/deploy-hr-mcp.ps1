@@ -16,6 +16,8 @@ param(
     [string]$AcaSubnetPrefix = $env:HR_MCP_ACA_SUBNET_PREFIX,
     [int]$AcaSubnetPrefixLength = $(if ($env:HR_MCP_ACA_SUBNET_PREFIX_LENGTH) { [int]$env:HR_MCP_ACA_SUBNET_PREFIX_LENGTH } else { 26 }),
     [string]$AcaSubnetId = $env:HR_MCP_ACA_SUBNET_ID,
+    [bool]$ExpandVnet = $(if ($env:HR_MCP_ACA_EXPAND_VNET) { $env:HR_MCP_ACA_EXPAND_VNET -eq 'true' } else { $true }),
+    [int]$ExpandPrefixLength = $(if ($env:HR_MCP_ACA_EXPAND_PREFIX_LENGTH) { [int]$env:HR_MCP_ACA_EXPAND_PREFIX_LENGTH } else { 0 }),
     [string]$ScopeName = $(if ($env:HR_MCP_SCOPE_NAME) { $env:HR_MCP_SCOPE_NAME } else { 'Mcp.Access' }),
     [string]$AppRoleValue = $(if ($env:HR_MCP_APP_ROLE_VALUE) { $env:HR_MCP_APP_ROLE_VALUE } else { 'Mcp.Invoke' })
 )
@@ -467,6 +469,26 @@ function ConvertTo-IPv4UInt32 {
     return [BitConverter]::ToUInt32($bytes, 0)
 }
 
+function Test-IsPrivateIPv4Network {
+    # True only when the entire CIDR block falls inside an RFC 1918 private range.
+    param([string]$Cidr)
+    $parts = $Cidr.Split('/')
+    $ip = [uint32](ConvertTo-IPv4UInt32 $parts[0])
+    $prefix = [int]$parts[1]
+    $size = [uint64]1 -shl (32 - $prefix)
+    $start = [uint64]$ip
+    $end = $start + $size - 1
+    $ranges = @(
+        @{ Start = [uint64](ConvertTo-IPv4UInt32 '10.0.0.0');     End = [uint64](ConvertTo-IPv4UInt32 '10.255.255.255') },
+        @{ Start = [uint64](ConvertTo-IPv4UInt32 '172.16.0.0');   End = [uint64](ConvertTo-IPv4UInt32 '172.31.255.255') },
+        @{ Start = [uint64](ConvertTo-IPv4UInt32 '192.168.0.0');  End = [uint64](ConvertTo-IPv4UInt32 '192.168.255.255') }
+    )
+    foreach ($r in $ranges) {
+        if ($start -ge $r.Start -and $end -le $r.End) { return $true }
+    }
+    return $false
+}
+
 function Test-CidrContains {
     param(
         [string]$ParentCidr,
@@ -548,6 +570,93 @@ function Find-AvailableSubnetPrefix {
     return $null
 }
 
+function Get-ExpansionSubnetPrefix {
+    # When no free subnet exists inside the current address space, compute how to
+    # expand the VNet: a new address prefix to ADD (sized to match the existing VNet
+    # block so addressing stays consistent, e.g. extend 10.170.0.0/24 -> add
+    # 10.170.1.0/24) plus the subnet to carve from it (e.g. 10.170.1.0/26).
+    param(
+        [string[]]$VnetPrefixes,
+        [string[]]$UsedSubnetPrefixes,
+        [int]$PrefixLength,
+        [int]$SupernetLength = 0
+    )
+    $ipv4 = @($VnetPrefixes | Where-Object { $_ -and $_ -notmatch ':' })
+    if ($ipv4.Count -eq 0) { return $null }
+
+    if ($SupernetLength -le 0) {
+        $SupernetLength = ($ipv4 | ForEach-Object { [int]($_.Split('/')[1]) } | Measure-Object -Minimum).Minimum
+    }
+    if ($SupernetLength -gt $PrefixLength) { $SupernetLength = $PrefixLength }
+
+    $block = [uint64]1 -shl (32 - $SupernetLength)
+    $maxEnd = [uint64]0
+    foreach ($p in $ipv4) {
+        $parts = $p.Split('/')
+        $ip = [uint64](ConvertTo-IPv4UInt32 $parts[0])
+        $size = [uint64]1 -shl (32 - [int]$parts[1])
+        $end = $ip + $size - 1
+        if ($end -gt $maxEnd) { $maxEnd = $end }
+    }
+    $candidateInt = [uint64]([math]::Floor(($maxEnd + 1 + $block - 1) / $block)) * $block
+
+    for ($i = 0; $i -lt 4096; $i++) {
+        if (($candidateInt + $block - 1) -gt [uint64]4294967295) { break }
+        $bytes = [BitConverter]::GetBytes([uint32]$candidateInt)
+        [Array]::Reverse($bytes)
+        $vnetBlock = "$([System.Net.IPAddress]::new($bytes))/$SupernetLength"
+        if ((Test-IsPrivateIPv4Network -Cidr $vnetBlock)) {
+            $overlaps = $false
+            foreach ($existing in ($VnetPrefixes + $UsedSubnetPrefixes)) {
+                if ($existing -and (Test-CidrOverlap -CidrA $vnetBlock -CidrB $existing)) { $overlaps = $true; break }
+            }
+            if (-not $overlaps) {
+                $subnet = (Get-SubnetCandidates -ParentCidr $vnetBlock -NewPrefixLength $PrefixLength)[0]
+                return [pscustomobject]@{ VnetPrefix = $vnetBlock; SubnetPrefix = $subnet }
+            }
+        }
+        $candidateInt += $block
+    }
+    return $null
+}
+
+function Get-ExpansionVnetPrefixForSubnet {
+    # Given an explicit subnet prefix outside the current VNet address space, return the
+    # aligned address-space block (sized to the existing VNet block style) that contains
+    # it and can be added, e.g. subnet 10.170.1.0/26 -> add 10.170.1.0/24.
+    param(
+        [string]$SubnetPrefix,
+        [string[]]$VnetPrefixes,
+        [string[]]$UsedSubnetPrefixes,
+        [int]$SupernetLength = 0
+    )
+    $subnetParts = $SubnetPrefix.Split('/')
+    $subnetPrefixLen = [int]$subnetParts[1]
+    $ipv4 = @($VnetPrefixes | Where-Object { $_ -and $_ -notmatch ':' })
+
+    if ($SupernetLength -le 0) {
+        if ($ipv4.Count -gt 0) {
+            $SupernetLength = ($ipv4 | ForEach-Object { [int]($_.Split('/')[1]) } | Measure-Object -Minimum).Minimum
+        } else {
+            $SupernetLength = $subnetPrefixLen
+        }
+    }
+    if ($SupernetLength -gt $subnetPrefixLen) { $SupernetLength = $subnetPrefixLen }
+
+    $subnetIp = [uint32](ConvertTo-IPv4UInt32 $subnetParts[0])
+    $mask = if ($SupernetLength -eq 0) { [uint32]0 } else { [uint32]::MaxValue -shl (32 - $SupernetLength) }
+    $network = [uint32]($subnetIp -band $mask)
+    $bytes = [BitConverter]::GetBytes($network)
+    [Array]::Reverse($bytes)
+    $block = "$([System.Net.IPAddress]::new($bytes))/$SupernetLength"
+
+    if (-not (Test-IsPrivateIPv4Network -Cidr $block)) { return $null }
+    foreach ($existing in ($VnetPrefixes + $UsedSubnetPrefixes)) {
+        if ($existing -and (Test-CidrOverlap -CidrA $block -CidrB $existing)) { return $null }
+    }
+    return $block
+}
+
 function Resolve-CitadelAcaSubnet {
     param(
         [string]$HubResourceGroup,
@@ -555,7 +664,9 @@ function Resolve-CitadelAcaSubnet {
         [string]$RequestedSubnetName,
         [AllowNull()][string]$RequestedSubnetId,
         [AllowNull()][string]$RequestedSubnetPrefix,
-        [int]$RequestedSubnetPrefixLength
+        [int]$RequestedSubnetPrefixLength,
+        [bool]$AllowExpandVnet = $true,
+        [int]$ExpandSupernetLength = 0
     )
 
     if (-not [string]::IsNullOrWhiteSpace($RequestedSubnetId)) {
@@ -573,6 +684,7 @@ function Resolve-CitadelAcaSubnet {
             VnetName = $vnetName
             SubnetName = $subnetObj.name
             SubnetId = $subnetObj.id
+            AddedVnetPrefix = ''
         }
     }
 
@@ -591,6 +703,7 @@ function Resolve-CitadelAcaSubnet {
         --vnet-name $RequestedVnetName `
         --name $RequestedSubnetName `
         -o json 2>$null
+    $addedVnetPrefix = ''
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($subnetJson)) {
         Write-Step "Creating dedicated HR MCP subnet '$RequestedSubnetName' in Citadel hub VNet"
         $vnetInfo = & az network vnet show --resource-group $HubResourceGroup --name $RequestedVnetName --query '{addressPrefixes:addressSpace.addressPrefixes,subnetPrefixes:subnets[].addressPrefix}' -o json | ConvertFrom-Json
@@ -599,10 +712,37 @@ function Resolve-CitadelAcaSubnet {
         if ([string]::IsNullOrWhiteSpace($RequestedSubnetPrefix)) {
             $RequestedSubnetPrefix = Find-AvailableSubnetPrefix -VnetPrefixes $prefixes -UsedSubnetPrefixes $usedSubnetPrefixes -PrefixLength $RequestedSubnetPrefixLength
             if ([string]::IsNullOrWhiteSpace($RequestedSubnetPrefix)) {
-                throw "Could not find an available /$RequestedSubnetPrefixLength subnet in VNet '$RequestedVnetName'. Set HR_MCP_ACA_SUBNET_PREFIX to an available, non-overlapping prefix or expand the Citadel hub VNet address space."
+                if (-not $AllowExpandVnet) {
+                    throw "Could not find an available /$RequestedSubnetPrefixLength subnet in VNet '$RequestedVnetName'. Set HR_MCP_ACA_SUBNET_PREFIX to an available, non-overlapping prefix, or set HR_MCP_ACA_EXPAND_VNET=true to auto-expand the Citadel hub VNet address space."
+                }
+                $expansion = Get-ExpansionSubnetPrefix -VnetPrefixes $prefixes -UsedSubnetPrefixes $usedSubnetPrefixes -PrefixLength $RequestedSubnetPrefixLength -SupernetLength $ExpandSupernetLength
+                if ($null -eq $expansion) {
+                    throw "No free /$RequestedSubnetPrefixLength subnet inside VNet '$RequestedVnetName' and could not compute a non-overlapping prefix to expand it. Set HR_MCP_ACA_SUBNET_PREFIX explicitly."
+                }
+                $addedVnetPrefix = $expansion.VnetPrefix
+                $RequestedSubnetPrefix = $expansion.SubnetPrefix
             }
         } elseif (-not (Test-PrefixInsideAnyVnetPrefix -RequestedPrefix $RequestedSubnetPrefix -VnetPrefixes $prefixes)) {
-            throw "Requested HR_MCP_ACA_SUBNET_PREFIX '$RequestedSubnetPrefix' is outside VNet '$RequestedVnetName'. Choose a prefix inside the existing VNet address space."
+            if (-not $AllowExpandVnet) {
+                throw "Requested HR_MCP_ACA_SUBNET_PREFIX '$RequestedSubnetPrefix' is outside VNet '$RequestedVnetName'. Choose a prefix inside the existing VNet address space, or set HR_MCP_ACA_EXPAND_VNET=true to add it to the VNet."
+            }
+            $addedVnetPrefix = Get-ExpansionVnetPrefixForSubnet -SubnetPrefix $RequestedSubnetPrefix -VnetPrefixes $prefixes -UsedSubnetPrefixes $usedSubnetPrefixes -SupernetLength $ExpandSupernetLength
+            if ([string]::IsNullOrWhiteSpace($addedVnetPrefix)) {
+                throw "Requested HR_MCP_ACA_SUBNET_PREFIX '$RequestedSubnetPrefix' is outside VNet '$RequestedVnetName' and could not be aligned to a non-overlapping address space block. Choose a different prefix."
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($addedVnetPrefix)) {
+            Write-Step "No free /$RequestedSubnetPrefixLength subnet in VNet '$RequestedVnetName'; extending address space with '$addedVnetPrefix' and carving subnet '$RequestedSubnetPrefix'"
+            & az network vnet update `
+                --resource-group $HubResourceGroup `
+                --name $RequestedVnetName `
+                --add addressSpace.addressPrefixes $addedVnetPrefix `
+                --only-show-errors `
+                -o none
+            if ($LASTEXITCODE -ne 0) {
+                throw "Could not add address prefix '$addedVnetPrefix' to VNet '$RequestedVnetName' (it may overlap a peered network). Set HR_MCP_ACA_SUBNET_PREFIX to a non-overlapping prefix."
+            }
         }
         & az network vnet subnet create `
             --resource-group $HubResourceGroup `
@@ -631,6 +771,7 @@ function Resolve-CitadelAcaSubnet {
         VnetName = $RequestedVnetName
         SubnetName = $subnetObj.name
         SubnetId = $subnetObj.id
+        AddedVnetPrefix = $addedVnetPrefix
     }
 }
 
@@ -703,7 +844,7 @@ if ([string]::IsNullOrWhiteSpace($CitadelResourceGroup)) {
 if ([string]::IsNullOrWhiteSpace($CitadelResourceGroup)) {
     throw 'Citadel hub resource group is missing. Set HR_MCP_CITADEL_RESOURCE_GROUP or ensure AZURE_RESOURCE_GROUP is available in azd env.'
 }
-$acaSubnet = Resolve-CitadelAcaSubnet -HubResourceGroup $CitadelResourceGroup -RequestedVnetName $CitadelVnetName -RequestedSubnetName $AcaSubnetName -RequestedSubnetId $AcaSubnetId -RequestedSubnetPrefix $AcaSubnetPrefix -RequestedSubnetPrefixLength $AcaSubnetPrefixLength
+$acaSubnet = Resolve-CitadelAcaSubnet -HubResourceGroup $CitadelResourceGroup -RequestedVnetName $CitadelVnetName -RequestedSubnetName $AcaSubnetName -RequestedSubnetId $AcaSubnetId -RequestedSubnetPrefix $AcaSubnetPrefix -RequestedSubnetPrefixLength $AcaSubnetPrefixLength -AllowExpandVnet $ExpandVnet -ExpandSupernetLength $ExpandPrefixLength
 
 Write-Step 'Creating HR MCP resource group'
 & az group create `
@@ -766,23 +907,27 @@ $acrLoginServer = ConvertTo-TrimmedCliOutput (& az acr show --name $AcrName --re
 $imageName = "${acrLoginServer}/${imageRepository}:${imageTag}"
 
 Write-Step 'Building HR MCP image remotely with ACR'
-$baseImageRef = 'python:3.13-slim'
-$uvImageRef = 'ghcr.io/astral-sh/uv:latest'
-& az acr import --name $AcrName --source docker.io/library/python:3.13-slim --image python:3.13-slim --force --only-show-errors -o none 2>$null
-if ($LASTEXITCODE -eq 0) { $baseImageRef = "$acrLoginServer/python:3.13-slim" } else { Write-Warning "Could not import python:3.13-slim into $AcrName; building from Docker Hub (may hit pull-rate limits)." }
-& az acr import --name $AcrName --source ghcr.io/astral-sh/uv:latest --image astral-sh/uv:latest --force --only-show-errors -o none 2>$null
-if ($LASTEXITCODE -eq 0) { $uvImageRef = "$acrLoginServer/astral-sh/uv:latest" } else { Write-Warning "Could not import the uv image into $AcrName; building from GHCR." }
-Push-Location $workshopDir
+# The base image bundles Python 3.13 and uv and is hosted on GHCR, which is not
+# subject to Docker Hub's anonymous pull-rate limit.
+$baseImageSource = 'ghcr.io/astral-sh/uv:python3.13-bookworm-slim'
+$baseImageRepo = 'astral-sh/uv-python:3.13-bookworm-slim'
+$baseImageRef = $baseImageSource
+& az acr import --name $AcrName --source $baseImageSource --image $baseImageRepo --force --only-show-errors -o none 2>$null
+if ($LASTEXITCODE -eq 0) { $baseImageRef = "$acrLoginServer/$baseImageRepo" } else { Write-Warning "Could not import $baseImageSource into $AcrName; building from GHCR directly." }
+Write-Host 'Note: ACR remote builds run on a shared agent pool. On Basic/Standard SKUs the run can sit in "Queued" (no log output) for several minutes before it starts; this is normal and not a hang. The build itself takes well under a minute.'
+# Build from inside the small server folder so ACR only uploads ~250 KB of
+# source instead of the entire workshop tree (e.g. a multi-hundred-MB .venv).
+# `--file` is resolved relative to the current directory, so cd into the
+# context root and pass "." as the build context.
+Push-Location (Join-Path $workshopDir 'mcp-hr/server')
 try {
     & az acr build `
         --registry $AcrName `
         --image "${imageRepository}:${imageTag}" `
-        --file 'mcp-hr/server/Dockerfile' `
+        --file 'Dockerfile' `
         --build-arg "BASE_IMAGE=$baseImageRef" `
-        --build-arg "UV_IMAGE=$uvImageRef" `
-        . `
-        --only-show-errors `
-        -o none
+        '.' `
+        --only-show-errors
 }
 finally {
     Pop-Location
@@ -1013,6 +1158,7 @@ Save-AzdValue HR_MCP_CITADEL_RESOURCE_GROUP $CitadelResourceGroup
 Save-AzdValue HR_MCP_CITADEL_VNET_NAME $acaSubnet.VnetName
 Save-AzdValue HR_MCP_ACA_SUBNET_NAME $acaSubnet.SubnetName
 Save-AzdValue HR_MCP_ACA_SUBNET_ID $acaSubnet.SubnetId
+Save-AzdValue HR_MCP_ACA_ADDED_VNET_PREFIX $acaSubnet.AddedVnetPrefix
 Save-AzdValue HR_MCP_APP_INSIGHTS_NAME $AppInsightsName
 Save-AzdValue HR_MCP_TENANT_ID $tenantId
 Save-AzdValue HR_MCP_API_CLIENT_ID $apiApp.ClientId

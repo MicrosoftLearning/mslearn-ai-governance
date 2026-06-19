@@ -136,26 +136,22 @@ ensure_extension() {
   az extension add --name "$name" --upgrade --only-show-errors >/dev/null
 }
 
-# Import the container base images into the target ACR so remote builds do not
-# pull from Docker Hub on every build (avoids the anonymous pull-rate limit).
-# Sets HR_MCP_BASE_IMAGE_REF / HR_MCP_UV_IMAGE_REF; falls back to public refs.
+# Import the container base image into the target ACR so remote builds do not
+# pull from a public registry on every build. The image bundles Python 3.13 and
+# uv and is hosted on GHCR, which is not subject to Docker Hub's anonymous
+# pull-rate limit. Sets HR_MCP_BASE_IMAGE_REF; falls back to the public ref.
 ensure_acr_base_images() {
   local acr="$1"
   local acr_login="$2"
-  HR_MCP_BASE_IMAGE_REF="python:3.13-slim"
-  HR_MCP_UV_IMAGE_REF="ghcr.io/astral-sh/uv:latest"
+  local source_ref="ghcr.io/astral-sh/uv:python3.13-bookworm-slim"
+  local target_repo="astral-sh/uv-python:3.13-bookworm-slim"
+  HR_MCP_BASE_IMAGE_REF="$source_ref"
   [[ -n "$acr_login" ]] || return 0
 
-  if az acr import --name "$acr" --source docker.io/library/python:3.13-slim --image python:3.13-slim --force --only-show-errors -o none 2>/dev/null; then
-    HR_MCP_BASE_IMAGE_REF="${acr_login}/python:3.13-slim"
+  if az acr import --name "$acr" --source "$source_ref" --image "$target_repo" --force --only-show-errors -o none 2>/dev/null; then
+    HR_MCP_BASE_IMAGE_REF="${acr_login}/${target_repo}"
   else
-    warn "Could not import python:3.13-slim into ${acr}; building from Docker Hub (may hit pull-rate limits)."
-  fi
-
-  if az acr import --name "$acr" --source ghcr.io/astral-sh/uv:latest --image astral-sh/uv:latest --force --only-show-errors -o none 2>/dev/null; then
-    HR_MCP_UV_IMAGE_REF="${acr_login}/astral-sh/uv:latest"
-  else
-    warn "Could not import the uv image into ${acr}; building from GHCR."
+    warn "Could not import ${source_ref} into ${acr}; building from GHCR directly."
   fi
 }
 
@@ -283,6 +279,124 @@ raise SystemExit(1)
 PY
 }
 
+# Computes how to expand the VNet when no free subnet exists inside the current
+# address space. It walks forward from the end of the highest existing VNet prefix
+# and returns TWO space-separated values:
+#   1. a new VNet address prefix to ADD (sized to match the existing VNet block, so
+#      addressing stays consistent, e.g. extend 10.170.0.0/24 -> add 10.170.1.0/24)
+#   2. the subnet prefix to carve from it (e.g. 10.170.1.0/26)
+# Both are private, aligned, and non-overlapping with existing prefixes/subnets.
+# The supernet block size defaults to the largest existing VNet block and can be
+# overridden with HR_MCP_ACA_EXPAND_PREFIX_LENGTH.
+compute_expansion_subnet_prefix() {
+  local hub_rg="$1"
+  local vnet_name="$2"
+  local prefix_length="$3"
+  local supernet_length="${4:-}"
+
+  python3 - "$prefix_length" "$supernet_length" \
+    "$(az network vnet show \
+      --resource-group "$hub_rg" \
+      --name "$vnet_name" \
+      --query '{addressPrefixes:addressSpace.addressPrefixes,subnetPrefixes:subnets[].addressPrefix}' \
+      -o json)" <<'PY'
+import ipaddress
+import json
+import sys
+
+prefix_length = int(sys.argv[1])
+supernet_arg = sys.argv[2].strip()
+data = json.loads(sys.argv[3])
+vnet_prefixes = [ipaddress.ip_network(p, strict=False) for p in data.get("addressPrefixes", []) if p]
+subnet_prefixes = [ipaddress.ip_network(p, strict=False) for p in data.get("subnetPrefixes", []) if p]
+
+ipv4_vnet = [n for n in vnet_prefixes if n.version == 4]
+if not ipv4_vnet:
+    raise SystemExit(1)
+
+# Size the new VNet address prefix to match the existing block style so addressing
+# stays consistent (e.g. a /24 VNet is extended with another /24). Never larger
+# (numerically smaller) than the subnet prefix length we need to carve.
+if supernet_arg:
+    supernet_length = int(supernet_arg)
+else:
+    supernet_length = min(n.prefixlen for n in ipv4_vnet)
+supernet_length = min(supernet_length, prefix_length)
+
+block = 1 << (32 - supernet_length)
+max_end = max(int(n.broadcast_address) for n in ipv4_vnet)
+# Align the first candidate up to the next /<supernet_length> boundary past existing space.
+candidate_int = ((max_end + 1 + block - 1) // block) * block
+
+# Bound the search so we never loop unexpectedly; 4096 blocks is far more than needed.
+for _ in range(4096):
+    if candidate_int + block - 1 > 0xFFFFFFFF:
+        break
+    vnet_block = ipaddress.ip_network((candidate_int, supernet_length))
+    if vnet_block.is_private and \
+       all(not vnet_block.overlaps(n) for n in vnet_prefixes) and \
+       all(not vnet_block.overlaps(s) for s in subnet_prefixes):
+        subnet = next(vnet_block.subnets(new_prefix=prefix_length))
+        print(vnet_block, subnet)
+        raise SystemExit(0)
+    candidate_int += block
+
+raise SystemExit(1)
+PY
+}
+
+# Given an explicit subnet prefix that falls OUTSIDE the current VNet address space,
+# returns the aligned address-space block (sized to the existing VNet block style) that
+# contains it and can be added to the VNet, e.g. subnet 10.170.1.0/26 -> add 10.170.1.0/24.
+# The block must be private and not overlap any existing VNet prefix or subnet.
+compute_expansion_vnet_prefix_for_subnet() {
+  local hub_rg="$1"
+  local vnet_name="$2"
+  local subnet_prefix="$3"
+  local supernet_length="${4:-}"
+
+  python3 - "$subnet_prefix" "$supernet_length" \
+    "$(az network vnet show \
+      --resource-group "$hub_rg" \
+      --name "$vnet_name" \
+      --query '{addressPrefixes:addressSpace.addressPrefixes,subnetPrefixes:subnets[].addressPrefix}' \
+      -o json)" <<'PY'
+import ipaddress
+import json
+import sys
+
+subnet = ipaddress.ip_network(sys.argv[1], strict=False)
+supernet_arg = sys.argv[2].strip()
+data = json.loads(sys.argv[3])
+vnet_prefixes = [ipaddress.ip_network(p, strict=False) for p in data.get("addressPrefixes", []) if p]
+subnet_prefixes = [ipaddress.ip_network(p, strict=False) for p in data.get("subnetPrefixes", []) if p]
+
+if subnet.version != 4:
+    raise SystemExit(1)
+
+ipv4_vnet = [n for n in vnet_prefixes if n.version == 4]
+if supernet_arg:
+    supernet_length = int(supernet_arg)
+elif ipv4_vnet:
+    supernet_length = min(n.prefixlen for n in ipv4_vnet)
+else:
+    supernet_length = subnet.prefixlen
+supernet_length = min(supernet_length, subnet.prefixlen)
+
+block = subnet.supernet(new_prefix=supernet_length)
+
+if not block.is_private:
+    raise SystemExit(1)
+if any(block.overlaps(n) for n in vnet_prefixes):
+    raise SystemExit(1)
+if any(block.overlaps(s) for s in subnet_prefixes):
+    raise SystemExit(1)
+
+print(block)
+raise SystemExit(0)
+PY
+}
+
 resolve_citadel_aca_subnet() {
   local hub_rg="$1"
   local requested_vnet="$2"
@@ -291,6 +405,9 @@ resolve_citadel_aca_subnet() {
   local requested_prefix="$5"
   local prefix_length="$6"
   local vnet_count delegation subnet_id
+  local needs_expansion=0
+  local vnet_prefixes=()
+  local expansion_vnet_prefix=""
 
   if [[ -n "$requested_subnet_id" ]]; then
     HR_MCP_CITADEL_VNET_NAME_VALUE="$(az network vnet list --resource-group "$hub_rg" --query "[?contains('${requested_subnet_id}', id)].name | [0]" -o tsv 2>/dev/null || true)"
@@ -336,9 +453,34 @@ resolve_citadel_aca_subnet() {
 
     if [[ -z "$requested_prefix" ]]; then
       requested_prefix="$(resolve_available_subnet_prefix "$hub_rg" "$HR_MCP_CITADEL_VNET_NAME_VALUE" "$prefix_length" 2>/dev/null || true)"
-      [[ -n "$requested_prefix" ]] || fail "Could not find an available /${prefix_length} subnet in VNet '$HR_MCP_CITADEL_VNET_NAME_VALUE'. Set HR_MCP_ACA_SUBNET_PREFIX to an available, non-overlapping prefix or expand the Citadel hub VNet address space."
+      if [[ -z "$requested_prefix" ]]; then
+        if [[ "${HR_MCP_ACA_EXPAND_VNET:-true}" != "true" ]]; then
+          fail "Could not find an available /${prefix_length} subnet in VNet '$HR_MCP_CITADEL_VNET_NAME_VALUE'. Set HR_MCP_ACA_SUBNET_PREFIX to an available, non-overlapping prefix, or set HR_MCP_ACA_EXPAND_VNET=true to auto-expand the Citadel hub VNet address space."
+        fi
+        read -r expansion_vnet_prefix requested_prefix < <(compute_expansion_subnet_prefix "$hub_rg" "$HR_MCP_CITADEL_VNET_NAME_VALUE" "$prefix_length" "${HR_MCP_ACA_EXPAND_PREFIX_LENGTH:-}" 2>/dev/null || true)
+        [[ -n "$requested_prefix" && -n "$expansion_vnet_prefix" ]] || fail "No free /${prefix_length} subnet inside VNet '$HR_MCP_CITADEL_VNET_NAME_VALUE' and could not compute a non-overlapping prefix to expand it. Set HR_MCP_ACA_SUBNET_PREFIX explicitly."
+        needs_expansion=1
+      fi
     elif ! prefix_inside_any_vnet_prefix "$requested_prefix" "${vnet_prefixes[@]}"; then
-      fail "Requested HR_MCP_ACA_SUBNET_PREFIX '$requested_prefix' is outside VNet '$HR_MCP_CITADEL_VNET_NAME_VALUE'. Choose a prefix inside the existing VNet address space."
+      if [[ "${HR_MCP_ACA_EXPAND_VNET:-true}" != "true" ]]; then
+        fail "Requested HR_MCP_ACA_SUBNET_PREFIX '$requested_prefix' is outside VNet '$HR_MCP_CITADEL_VNET_NAME_VALUE'. Choose a prefix inside the existing VNet address space, or set HR_MCP_ACA_EXPAND_VNET=true to add it to the VNet."
+      fi
+      expansion_vnet_prefix="$(compute_expansion_vnet_prefix_for_subnet "$hub_rg" "$HR_MCP_CITADEL_VNET_NAME_VALUE" "$requested_prefix" "${HR_MCP_ACA_EXPAND_PREFIX_LENGTH:-}" 2>/dev/null || true)"
+      [[ -n "$expansion_vnet_prefix" ]] || fail "Requested HR_MCP_ACA_SUBNET_PREFIX '$requested_prefix' is outside VNet '$HR_MCP_CITADEL_VNET_NAME_VALUE' and could not be aligned to a non-overlapping address space block. Choose a different prefix."
+      needs_expansion=1
+    fi
+
+    if [[ "$needs_expansion" == "1" ]]; then
+      log "No free /${prefix_length} subnet in VNet '${HR_MCP_CITADEL_VNET_NAME_VALUE}'; extending address space with '${expansion_vnet_prefix}' and carving subnet '${requested_prefix}'"
+      az network vnet update \
+        --resource-group "$hub_rg" \
+        --name "$HR_MCP_CITADEL_VNET_NAME_VALUE" \
+        --add addressSpace.addressPrefixes "$expansion_vnet_prefix" \
+        --only-show-errors \
+        -o none || fail "Could not add address prefix '${expansion_vnet_prefix}' to VNet '${HR_MCP_CITADEL_VNET_NAME_VALUE}' (it may overlap a peered network). Set HR_MCP_ACA_SUBNET_PREFIX to a non-overlapping prefix."
+      vnet_prefixes+=("$expansion_vnet_prefix")
+      # Record the prefix we added so teardown can remove it once the subnet is gone.
+      HR_MCP_ACA_ADDED_VNET_PREFIX_VALUE="$expansion_vnet_prefix"
     fi
 
     log "Creating dedicated HR MCP subnet '${HR_MCP_ACA_SUBNET_NAME_VALUE}' in Citadel hub VNet"
@@ -612,6 +754,7 @@ dockerfile_path="${workshop_dir}/mcp-hr/server/Dockerfile"
 
 citadel_hub_resource_group="$(first_non_empty "${HR_MCP_CITADEL_RESOURCE_GROUP:-}" "${AZURE_RESOURCE_GROUP:-}" "$azd_resource_group")"
 [[ -n "$citadel_hub_resource_group" ]] || fail 'Citadel hub resource group is missing. Set HR_MCP_CITADEL_RESOURCE_GROUP or ensure AZURE_RESOURCE_GROUP is available in azd env.'
+HR_MCP_ACA_ADDED_VNET_PREFIX_VALUE=""
 resolve_citadel_aca_subnet \
   "$citadel_hub_resource_group" \
   "${HR_MCP_CITADEL_VNET_NAME:-}" \
@@ -682,17 +825,20 @@ image_name="${acr_login_server}/${image_repository}:${image_tag}"
 
 log 'Building HR MCP image remotely with ACR'
 ensure_acr_base_images "$acr_name" "$acr_login_server"
+printf 'Note: ACR remote builds run on a shared agent pool. On Basic/Standard SKUs the run can sit in "Queued" (no log output) for several minutes before it starts; this is normal and not a hang. The build itself takes well under a minute.\n'
 (
-  cd "$workshop_dir"
+  # Build from inside the small server folder so ACR only uploads ~250 KB of
+  # source instead of the entire workshop tree (e.g. a multi-hundred-MB .venv).
+  # `--file` is resolved relative to the current directory, so cd into the
+  # context root and pass "." as the build context.
+  cd "$workshop_dir/mcp-hr/server"
   az acr build \
     --registry "$acr_name" \
     --image "${image_repository}:${image_tag}" \
-    --file "mcp-hr/server/Dockerfile" \
+    --file "Dockerfile" \
     --build-arg "BASE_IMAGE=${HR_MCP_BASE_IMAGE_REF}" \
-    --build-arg "UV_IMAGE=${HR_MCP_UV_IMAGE_REF}" \
-    . \
-    --only-show-errors \
-    -o none
+    "." \
+    --only-show-errors
 )
 
 log 'Creating Container Apps environment'
@@ -908,6 +1054,7 @@ save_azd_value HR_MCP_CITADEL_RESOURCE_GROUP "$citadel_hub_resource_group"
 save_azd_value HR_MCP_CITADEL_VNET_NAME "$HR_MCP_CITADEL_VNET_NAME_VALUE"
 save_azd_value HR_MCP_ACA_SUBNET_NAME "$HR_MCP_ACA_SUBNET_NAME_VALUE"
 save_azd_value HR_MCP_ACA_SUBNET_ID "$HR_MCP_ACA_SUBNET_ID_VALUE"
+save_azd_value HR_MCP_ACA_ADDED_VNET_PREFIX "$HR_MCP_ACA_ADDED_VNET_PREFIX_VALUE"
 save_azd_value HR_MCP_APP_INSIGHTS_NAME "$app_insights_name"
 save_azd_value HR_MCP_TENANT_ID "$tenant_id"
 save_azd_value HR_MCP_API_CLIENT_ID "$HR_MCP_API_CLIENT_ID_VALUE"

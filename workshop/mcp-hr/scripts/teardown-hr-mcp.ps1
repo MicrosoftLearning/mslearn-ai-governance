@@ -12,9 +12,11 @@ param(
 # Tear down the HR MCP deployment created by deploy-hr-mcp.ps1 and published by
 # publish-hr-mcp-apim.ps1. Every step is best-effort and idempotent: objects that
 # were already removed (for example, deleted by hand in the portal) are skipped
-# with a notice instead of failing the run. Finally, all HR_MCP_* values are
-# cleared from the active azd environment so a stale backend URL can never leak
-# into a later deploy/publish cycle.
+# with a notice instead of failing the run. If deploy-hr-mcp expanded the Citadel
+# hub VNet (HR_MCP_ACA_ADDED_VNET_PREFIX), that added address space is removed after
+# the dedicated subnet is deleted. Finally, all HR_MCP_* values are cleared from the
+# active azd environment so a stale backend URL can never leak into a later
+# deploy/publish cycle.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -26,6 +28,28 @@ function Assert-Command { param([string]$Name) if (-not (Get-Command $Name -Erro
 function ConvertTo-TrimmedCliOutput { param([AllowNull()]$Value) if ($null -eq $Value) { return $null }; $text = [string]($Value | Select-Object -First 1); if ([string]::IsNullOrWhiteSpace($text)) { return $null }; return $text.Trim() }
 function Get-AzdValue { param([string]$Name) $value = (& azd env get-value $Name 2>$null); if ($LASTEXITCODE -ne 0) { return $null }; return ConvertTo-TrimmedCliOutput $value }
 function Get-FirstNonEmpty { param([AllowNull()][string[]]$Values) foreach ($value in $Values) { if (-not [string]::IsNullOrWhiteSpace($value)) { return $value } }; return $null }
+
+function ConvertTo-IPv4UInt32 {
+    param([string]$Address)
+    $bytes = [System.Net.IPAddress]::Parse($Address).GetAddressBytes()
+    [Array]::Reverse($bytes)
+    return [BitConverter]::ToUInt32($bytes, 0)
+}
+
+function Test-CidrContains {
+    # True when ChildCidr is fully contained within ParentCidr (IPv4 only).
+    param([string]$ParentCidr, [string]$ChildCidr)
+    if ($ParentCidr -match ':' -or $ChildCidr -match ':') { return $false }
+    $parentParts = $ParentCidr.Split('/')
+    $childParts = $ChildCidr.Split('/')
+    $parentPrefix = [int]$parentParts[1]
+    $childPrefix = [int]$childParts[1]
+    if ($childPrefix -lt $parentPrefix) { return $false }
+    $parentIp = ConvertTo-IPv4UInt32 $parentParts[0]
+    $childIp = ConvertTo-IPv4UInt32 $childParts[0]
+    $mask = if ($parentPrefix -eq 0) { [uint32]0 } else { [uint32]::MaxValue -shl (32 - $parentPrefix) }
+    return (($parentIp -band $mask) -eq ($childIp -band $mask))
+}
 
 Assert-Command az
 Assert-Command azd
@@ -53,6 +77,9 @@ $subnetId = Get-FirstNonEmpty @($env:HR_MCP_ACA_SUBNET_ID, (Get-AzdValue HR_MCP_
 $hubRg = Get-FirstNonEmpty @($env:HR_MCP_CITADEL_RESOURCE_GROUP, (Get-AzdValue HR_MCP_CITADEL_RESOURCE_GROUP))
 $vnetName = Get-FirstNonEmpty @($env:HR_MCP_CITADEL_VNET_NAME, (Get-AzdValue HR_MCP_CITADEL_VNET_NAME))
 $subnetName = Get-FirstNonEmpty @($env:HR_MCP_ACA_SUBNET_NAME, (Get-AzdValue HR_MCP_ACA_SUBNET_NAME))
+# Address prefix deploy-hr-mcp added to the hub VNet when no free subnet was available.
+# It is removed only after the dedicated subnet is gone, leaving the original space intact.
+$addedVnetPrefix = Get-FirstNonEmpty @($env:HR_MCP_ACA_ADDED_VNET_PREFIX, (Get-AzdValue HR_MCP_ACA_ADDED_VNET_PREFIX))
 if ($subnetId) {
     if (-not $hubRg -and $subnetId -match '/resourceGroups/([^/]+)/') { $hubRg = $Matches[1] }
     if (-not $vnetName -and $subnetId -match '/virtualNetworks/([^/]+)/') { $vnetName = $Matches[1] }
@@ -90,6 +117,9 @@ if ($SkipSubnet) {
     Write-Note 'ACA hub subnet:          SKIPPED (-SkipSubnet)'
 } elseif ($hubRg -and $vnetName -and $subnetName) {
     Write-Note "ACA hub subnet:          $subnetName in $vnetName ($hubRg)"
+    if ($addedVnetPrefix) {
+        Write-Note "Added VNet address space: $addedVnetPrefix (REMOVE after subnet)"
+    }
 } else {
     Write-Note 'ACA hub subnet:          SKIPPED (subnet/VNet not resolved)'
 }
@@ -176,7 +206,39 @@ if (-not $SkipSubnet -and $hubRg -and $vnetName -and $subnetName) {
         } else {
             Write-Step "Deleting ACA subnet '$subnetName' from Citadel hub VNet '$vnetName'"
             & az network vnet subnet delete --resource-group $hubRg --vnet-name $vnetName --name $subnetName --only-show-errors -o none *> $null
-            if ($LASTEXITCODE -eq 0) { Write-Note "Deleted subnet '$subnetName'" } else { Write-Warning "Could not delete subnet '$subnetName'. It may still be in use by the ACA environment; rerun this script once '$mcpRg' has finished deleting." }
+            if ($LASTEXITCODE -eq 0) {
+                Write-Note "Deleted subnet '$subnetName'"
+                # Subnet is gone; now remove the address prefix deploy added (if any), but only
+                # when no other subnet still sits inside it, so we never shrink space in use.
+                if ($addedVnetPrefix) {
+                    $vnetInfoJson = (& az network vnet show --resource-group $hubRg --name $vnetName --query '{addressPrefixes:addressSpace.addressPrefixes,subnetPrefixes:subnets[].addressPrefix}' -o json 2>$null)
+                    $removeIndex = $null
+                    if ($vnetInfoJson) {
+                        $vnetInfo = $vnetInfoJson | ConvertFrom-Json
+                        $remainingPrefixes = @($vnetInfo.addressPrefixes)
+                        $remainingSubnets = @($vnetInfo.subnetPrefixes)
+                        $inUse = $false
+                        foreach ($s in $remainingSubnets) {
+                            if ($s -and (Test-CidrContains -ParentCidr $addedVnetPrefix -ChildCidr $s)) { $inUse = $true; break }
+                        }
+                        if ($inUse) {
+                            Write-Note "Address prefix '$addedVnetPrefix' still has subnets; leaving it on the VNet."
+                        } else {
+                            for ($i = 0; $i -lt $remainingPrefixes.Count; $i++) {
+                                if ($remainingPrefixes[$i] -eq $addedVnetPrefix) { $removeIndex = $i; break }
+                            }
+                            if ($null -eq $removeIndex) {
+                                Write-Note "Address prefix '$addedVnetPrefix' already absent from VNet (continuing)."
+                            } else {
+                                & az network vnet update --resource-group $hubRg --name $vnetName --remove addressSpace.addressPrefixes $removeIndex --only-show-errors -o none *> $null
+                                if ($LASTEXITCODE -eq 0) { Write-Note "Removed added VNet address space '$addedVnetPrefix'" } else { Write-Warning "Could not remove added VNet address space '$addedVnetPrefix' (continuing). Remove it manually if no longer needed." }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Write-Warning "Could not delete subnet '$subnetName'. It may still be in use by the ACA environment; rerun this script once '$mcpRg' has finished deleting."
+            }
         }
     } else {
         Write-Step "Subnet '$subnetName' already absent (continuing)."

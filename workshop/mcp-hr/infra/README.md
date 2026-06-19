@@ -12,14 +12,13 @@ It creates:
 
 ## Container base images and Docker Hub rate limits
 
-The HR MCP server image (`mcp-hr/server/Dockerfile`) and the hosted agent image (`mcp-hr/hosted-agent/Dockerfile`) build on `python:3.13-slim` (Docker Hub) and the `uv` image (GHCR). ACR remote builds pull these anonymously, which can hit Docker Hub's anonymous pull-rate limit (`toomanyrequests`).
+The HR MCP server image (`mcp-hr/server/Dockerfile`) builds on `ghcr.io/astral-sh/uv:python3.13-bookworm-slim`, a single GHCR image that bundles both Python 3.13 and `uv`. GHCR is not subject to Docker Hub's anonymous pull-rate limit (`toomanyrequests`), which previously caused ACR remote builds to fail or appear to hang while pulling `python:3.13-slim` from Docker Hub.
 
-To avoid this, both Dockerfiles parameterize the base images with build args (`BASE_IMAGE`, `UV_IMAGE`), and the build paths first mirror the images into the target ACR with `az acr import`, then build against the ACR-local copies:
+To further reduce external pulls, the server Dockerfile parameterizes the base image with a build arg (`BASE_IMAGE`), and the build path first mirrors the image into the target ACR with `az acr import`, then builds against the ACR-local copy:
 
-- `deploy-hr-mcp.*` imports into the HR MCP ACR and builds the server image with `--build-arg BASE_IMAGE=<acr>/python:3.13-slim --build-arg UV_IMAGE=<acr>/astral-sh/uv:latest`.
-- The notebook's hosted-agent build cell does the same against the spoke ACR.
+- `deploy-hr-mcp.*` imports `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` into the HR MCP ACR and builds the server image with `--build-arg BASE_IMAGE=<acr>/astral-sh/uv-python:3.13-bookworm-slim`.
 
-If `az acr import` is unavailable or fails, the build falls back to the public images (a warning is printed). Defaults remain the public images, so the Dockerfiles still work without ACR mirroring.
+If `az acr import` is unavailable or fails, the build falls back to the public GHCR image (a warning is printed). The default remains the public GHCR image, so the Dockerfile still works without ACR mirroring.
 
 ## Networking
 
