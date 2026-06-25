@@ -97,8 +97,13 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
     protocols: [
       'https'
     ]
+    // A pass-through MCP API (proxying an existing remote MCP server) must reference the
+    // backend via backendId. APIM rejects the API otherwise:
+    // "Either BackendId or MCP tools must be set, but not both for MCP API."
     #disable-next-line BCP037
-    mcpPropperties: {
+    backendId: backend.name
+    #disable-next-line BCP037
+    mcpProperties: {
       transportType: mcpTransportType
     }
   }
@@ -107,9 +112,6 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {
   parent: api
   name: 'policy'
-  dependsOn: [
-    backend
-  ]
   properties: {
     format: 'rawxml'
     value: apiPolicyXml
