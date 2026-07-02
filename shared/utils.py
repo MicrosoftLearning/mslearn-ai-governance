@@ -71,6 +71,87 @@ class Output(object):
         return json.loads("{}")  # return empty dict if no valid JSON found
 
 
+def azd_env_get(var_name, default=None):
+    """Return the value of an `azd` environment variable for the active azd environment.
+
+    Returns `default` when the `azd` CLI is not installed, no environment is selected,
+    or the variable is not set. The value is returned as a stripped string; callers
+    that expect JSON should `json.loads(...)` it themselves.
+
+    Designed for use in validation notebooks so a single `azd_env_get('AZURE_RESOURCE_GROUP')`
+    call works on Windows / macOS / Linux without leaking subprocess plumbing into the notebook.
+    """
+    try:
+        result = subprocess.run(
+            ["azd", "env", "get-value", var_name],
+            capture_output=True, text=True, check=False, shell=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        return default
+    except FileNotFoundError:
+        return default
+    except Exception:
+        return default
+
+
+def azd_env_get_json(var_name, default=None):
+    """Like `azd_env_get`, but parses the value as JSON. Returns `default` on any failure."""
+    raw = azd_env_get(var_name)
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
+
+def load_azd_env(var_map, verbose=True):
+    """Load multiple azd environment variables in one shot.
+
+    `var_map` maps a friendly label to either:
+      - a single env-var name (str)            → returns the raw string value
+      - a list of fallback env-var names       → returns the first match found
+      - a tuple `(names, "json")`              → JSON-decodes the matched value
+
+    Returns a dict keyed by the same labels. Missing values are omitted from the result
+    so callers can use `result.get(label, fallback_default)` patterns.
+
+    Example:
+        loaded = utils.load_azd_env({
+            "resource_group": ["AZURE_RESOURCE_GROUP", "GOVERNANCE_HUB_RESOURCE_GROUP"],
+            "location":       ["AZURE_LOCATION", "LOCATION"],
+            "llm_backends":   (["LLM_BACKEND_CONFIG", "LLM_BACKENDS_CONFIG"], "json"),
+        })
+    """
+    loaded = {}
+    for label, spec in var_map.items():
+        names, mode = (spec, "str")
+        if isinstance(spec, tuple):
+            names, mode = spec
+        if isinstance(names, str):
+            names = [names]
+        value = None
+        for n in names:
+            v = azd_env_get(n)
+            if v:
+                value = v
+                break
+        if value is None:
+            if verbose:
+                print_warning(f"azd env var not set for '{label}' (looked up: {names})")
+            continue
+        if mode == "json":
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as e:
+                if verbose:
+                    print_warning(f"azd env var '{label}' is not valid JSON: {e}")
+                continue
+        loaded[label] = value
+    return loaded
+
+
 def get_current_subscription():
     try:
         output = run("az account show", "Retrieved az account", "Failed to get the current az account")

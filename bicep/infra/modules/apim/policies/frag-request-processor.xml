@@ -40,6 +40,26 @@
     <!-- Remove API path prefix: /unified-ai/openai/chat/completions -> /openai/chat/completions -->
     <set-variable name="routing-processed-path" value="@(context.Request.Url.Path.Replace(context.Api.Path, "").TrimStart('/').Insert(0, "/"))" />
 
+    <!-- Detect non-LLM operation paths that are handled by named API operations (deployment
+         discovery for Microsoft Foundry integration). These intentionally do NOT match any
+         api-type base-path because they are served by operation-level policies that include
+         <base/> — so the API-level policy (this fragment) runs first and must let them through.
+         Examples: GET /deployments, GET /deployments/{deployment-id} -->
+    <set-variable name="is-non-llm-operation" value="@{
+        var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty);
+        var method = context.Request.Method;
+        if (!method.Equals("GET", StringComparison.OrdinalIgnoreCase)) { return false; }
+        // Match /deployments or /deployments/{name} (no further segments)
+        var trimmed = path.TrimEnd('/');
+        if (trimmed.Equals("/deployments", StringComparison.OrdinalIgnoreCase)) { return true; }
+        if (trimmed.StartsWith("/deployments/", StringComparison.OrdinalIgnoreCase)) {
+            var rest = trimmed.Substring("/deployments/".Length);
+            // Single segment after /deployments/ → deployment-by-name lookup
+            if (!String.IsNullOrEmpty(rest) && !rest.Contains("/")) { return true; }
+        }
+        return false;
+    }" />
+
     <!-- Determine API type from request path by matching against configured base-paths.
          Uses prefix matching (StartsWith) instead of substring (Contains) so that
          unrecognized prefixes like /v2/openai/... do NOT accidentally match /openai.
@@ -68,8 +88,23 @@
         } catch { return String.Empty; }
     }" />
 
-    <!-- Reject requests that don't match any configured API type base-path -->
+    <!-- Reject requests that don't match any configured API type base-path,
+         UNLESS the request is a known non-LLM operation (e.g., GET /deployments,
+         GET /deployments/{deployment-id}) that is intentionally served by an
+         operation-level policy via the get-available-models fragment. Those routes
+         do not — and should not — match any api-type base-path; we let processing
+         continue with safe defaults. The downstream fragments
+         (validate-model-access, set-target-backend-pool, set-backend-authorization,
+         set-llm-usage, path-builder) all short-circuit on requestedModel == "non-llm-request",
+         so the API-level policy becomes a no-op and the operation policy runs the lookup. -->
     <choose>
+        <when condition="@((bool)context.Variables.GetValueOrDefault<bool>("is-non-llm-operation", false))">
+            <!-- Force a synthetic api-type so the lookup below resolves to null safely. -->
+            <set-variable name="api-type" value="non-llm" />
+            <trace source="Request-Processor" severity="information">
+                <message>@($"Unified AI - Non-LLM operation: {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "n/a")} — bypassing api-type validation; operation-level policy will handle it")</message>
+            </trace>
+        </when>
         <when condition="@(String.IsNullOrEmpty(context.Variables.GetValueOrDefault<string>("api-type", String.Empty)))">
             <trace source="Request-Processor-Blocked" severity="error">
                 <message>@($"Unified AI - Blocked request to {context.Request.Method} {context.Variables.GetValueOrDefault<string>("routing-processed-path", "unknown")} from {context.Request.IpAddress}")</message>
@@ -97,6 +132,16 @@
     <set-variable name="apiTypeOverrideBackend" value="@{
         var apiTypeConfig = context.Variables.GetValueOrDefault<JObject>("api-type-config");
         return apiTypeConfig?["backend"]?.ToString() ?? String.Empty;
+    }" />
+
+    <!-- Set compatiblePoolTypes from api-type config (comma-separated). When set, set-target-backend-pool
+         restricts pool selection to pools whose poolType is in this list. Used by native-path api-types
+         (bedrock-native, gemini-native, claude-native) to ensure /bedrock/ requests only go to aws-bedrock
+         pools, /gemini/ to gemini pools, /claude/ to anthropic pools — even when other pool types
+         (e.g. aws-bedrock-mantle) advertise the same model name. -->
+    <set-variable name="compatiblePoolTypes" value="@{
+        var apiTypeConfig = context.Variables.GetValueOrDefault<JObject>("api-type-config");
+        return apiTypeConfig?["compatible-pool-types"]?.ToString() ?? String.Empty;
     }" />
 
     <!-- Signal that path-builder handles URI construction — set-backend-authorization should skip URL rewriting -->
@@ -142,18 +187,57 @@
                 return "non-llm-request";
             }
 
-            // Try body first (works for all API types)
+            // Try body first (works for all API types — including claude-native /v1/messages where model is in body)
             var bodyModel = context.Variables.GetValueOrDefault<JObject>("parsed-request-body")?["model"]?.ToString();
             if (!String.IsNullOrEmpty(bodyModel))
             {
                 return bodyModel;
             }
 
+            var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty);
+
+            // bedrock-native: /bedrock/model/{modelId}/{operation}  (e.g. /bedrock/model/us.anthropic.claude/converse)
+            // modelId may contain '/' (inference-profile ARNs, e.g.
+            // arn:aws:bedrock:eu-north-1:123:inference-profile/eu.amazon.nova-lite-v1:0).
+            // Even when clients percent-encode '/' as %2F, APIM decodes it back to '/' in Url.Path.
+            // The operation suffix (converse|converse-stream|invoke|invoke-with-response-stream)
+            // is always the LAST path segment, so split on the LAST '/' instead of the first.
+            if (apiType.Equals("bedrock-native", StringComparison.OrdinalIgnoreCase))
+            {
+                var marker = "/model/";
+                var idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                {
+                    var rest = path.Substring(idx + marker.Length);
+                    var slash = rest.LastIndexOf('/');
+                    var modelId = slash > 0 ? rest.Substring(0, slash) : rest;
+                    if (!String.IsNullOrEmpty(modelId)) { return System.Uri.UnescapeDataString(modelId); }
+                }
+            }
+
+            // gemini-native: /gemini/v1beta/models/{modelId}:{operation}  (e.g. /gemini/v1beta/models/gemini-2.5-flash:generateContent)
+            if (apiType.Equals("gemini-native", StringComparison.OrdinalIgnoreCase))
+            {
+                var marker = "/models/";
+                var idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                {
+                    var rest = path.Substring(idx + marker.Length);
+                    // Model name terminates at ':' (operation suffix), '/' or end of path
+                    int end = rest.Length;
+                    foreach (var sep in new[] { ':', '/' }) {
+                        var p = rest.IndexOf(sep);
+                        if (p >= 0 && p < end) { end = p; }
+                    }
+                    var modelId = rest.Substring(0, end);
+                    if (!String.IsNullOrEmpty(modelId)) { return System.Uri.UnescapeDataString(modelId); }
+                }
+            }
+
             // Try path extraction using api-path-segment (e.g., /openai/deployments/{model}/...)
             var segment = context.Variables.GetValueOrDefault<string>("api-path-segment", String.Empty);
             if (!String.IsNullOrEmpty(segment))
             {
-                var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", String.Empty);
                 var idx = path.IndexOf(segment + "/", StringComparison.OrdinalIgnoreCase);
                 if (idx >= 0)
                 {
@@ -169,20 +253,32 @@
         return String.Empty;
     }" />
 
-    <!-- Extract operation for openai-compat api-type (e.g., /v1/chat/completions → chat/completions) -->
+    <!-- Extract operation for openai-compat AND inference api-types so the path-builder
+         can look up provider-specific OpenAI-compat backend paths via
+         `backend-path-templates[poolType][operation]`. Universal LLM (api-type `inference`)
+         intentionally shares the same operation extraction so non-Foundry OpenAI-compat
+         providers (aws-bedrock-mantle, gemini-openai) get URL-rewritten the same way as
+         the Unified AI `openai-compat` surface.
+           Examples:
+             /v1/chat/completions      → chat/completions   (openai-compat)
+             /models/chat/completions  → chat/completions   (inference / Universal LLM)
+             /v1/embeddings            → embeddings
+             /models/embeddings        → embeddings -->
     <set-variable name="openai-compat-operation" value="@{
         var apiType = context.Variables.GetValueOrDefault<string>("api-type", "");
-        if (!apiType.Equals("openai-compat", StringComparison.OrdinalIgnoreCase)) {
+        if (!apiType.Equals("openai-compat", StringComparison.OrdinalIgnoreCase)
+            && !apiType.Equals("inference", StringComparison.OrdinalIgnoreCase)) {
             return String.Empty;
         }
         var path = context.Variables.GetValueOrDefault<string>("routing-processed-path", "");
-        // Remove /v1/ prefix to get the operation
-        var idx = path.IndexOf("/v1/", StringComparison.OrdinalIgnoreCase);
+        // Strip the api-type's base-path prefix to leave the operation segment.
+        // openai-compat base-path = /v1   ; inference base-path = /models
+        string prefix = apiType.Equals("openai-compat", StringComparison.OrdinalIgnoreCase) ? "/v1/" : "/models/";
+        var idx = path.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
         if (idx >= 0) {
-            return path.Substring(idx + 4).TrimEnd('/');
+            return path.Substring(idx + prefix.Length).TrimEnd('/');
         }
-        var trimmed = path.TrimStart('/');
-        return trimmed.Substring(Math.Min(3, trimmed.Length)).TrimStart('/');
+        return String.Empty;
     }" />
 
     <!-- Extract response-id for openai-compat responses operations (e.g., /v1/responses/{id}) -->
@@ -200,80 +296,10 @@
         </when>
     </choose>
 
-    <!-- Model alias resolution: check if requestedModel is an alias and resolve to actual model -->
-    <set-variable name="original-model-alias" value="" />
-    <set-variable name="is-alias" value="@(false)" />
-    <set-variable name="alias-models" value="@(new JArray())" />
-    <choose>
-        <when condition="@{
-            var model = context.Variables.GetValueOrDefault<string>("requestedModel", "");
-            if (string.IsNullOrEmpty(model) || model == "non-llm-request") { return false; }
-            var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
-            return aliases != null && aliases.Property(model) != null;
-        }">
-            <set-variable name="original-model-alias" value="@(context.Variables.GetValueOrDefault<string>("requestedModel", ""))" />
-            <set-variable name="is-alias" value="@(true)" />
-            <set-variable name="alias-models" value="@{
-                var alias = context.Variables.GetValueOrDefault<string>("requestedModel", "");
-                var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
-                if (aliases == null) { return new JArray(); }
-                var prop = aliases.Property(alias);
-                if (prop == null) { return new JArray(); }
-                var aliasEntry = prop.Value as JObject;
-                if (aliasEntry == null) { return new JArray(); }
-                var modelsProp = aliasEntry.Property("models");
-                if (modelsProp == null) { return new JArray(); }
-                var models = modelsProp.Value as JArray;
-                return models ?? new JArray();
-            }" />
-            <set-variable name="requestedModel" value="@{
-                var alias = context.Variables.GetValueOrDefault<string>("original-model-alias", "");
-                var aliases = context.Variables.GetValueOrDefault<JObject>("config-model-aliases");
-                if (aliases == null) { return alias; }
-                var prop = aliases.Property(alias);
-                if (prop == null) { return alias; }
-                var aliasConfig = prop.Value as JObject;
-                if (aliasConfig == null) { return alias; }
-                var modelsProp = aliasConfig.Property("models");
-                if (modelsProp == null) { return alias; }
-                var models = modelsProp.Value as JArray;
-                if (models == null || models.Count == 0) { return alias; }
-
-                var strategyProp = aliasConfig.Property("strategy");
-                var strategy = strategyProp != null ? strategyProp.Value.ToString() : "priority";
-                if (strategy.Equals("weighted", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Weighted round-robin using cache counter
-                    var weightsProp = aliasConfig.Property("weights");
-                    var weights = weightsProp != null ? weightsProp.Value as JArray : null;
-                    if (weights != null && weights.Count == models.Count)
-                    {
-                        var productId = context.Product != null ? context.Product.Id : "default";
-                        var cacheKey = "alias-counter-" + alias + "-" + productId;
-                        int counter = 0;
-                        try {
-                            if (context.Variables.ContainsKey(cacheKey)) {
-                                var cached = context.Variables.GetValueOrDefault<string>(cacheKey, "");
-                                if (!string.IsNullOrEmpty(cached)) { int.TryParse(cached, out counter); }
-                            }
-                        } catch { }
-
-                        int totalWeight = 0;
-                        foreach (var w in weights) { totalWeight += w.Value<int>(); }
-                        int pick = counter % Math.Max(totalWeight, 1);
-                        int cumulative = 0;
-                        for (int i = 0; i < models.Count; i++)
-                        {
-                            cumulative += weights[i].Value<int>();
-                            if (pick < cumulative) { return models[i].ToString(); }
-                        }
-                    }
-                }
-                // Default: priority — return first model
-                return models[0].ToString();
-            }" />
-        </when>
-    </choose>
+    <!-- Model alias resolution is now performed by the shared `resolve-model-alias` fragment,
+         invoked by the unified-ai-api-policy after request-processor. The shared fragment reads
+         `config-model-aliases` (set by central-cache-manager) so aliases stay sourced from the
+         cached metadata-config — and falls back to the inline static map for the other APIs. -->
 
     <!-- Validate that model parameter is present (skip for non-LLM requests) -->
     <choose>

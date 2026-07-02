@@ -69,9 +69,6 @@ param privateEndpointSubnetPrefix = readEnvironmentVariable('PRIVATE_ENDPOINT_SU
 param functionAppSubnetPrefix = readEnvironmentVariable('FUNCTION_APP_SUBNET_PREFIX', '10.170.0.128/26')
 param agentSubnetPrefix = readEnvironmentVariable('AGENT_SUBNET_PREFIX', '10.170.0.192/26')
 
-// Foundry network injection (agents). Defaults to true; required agent subnet is provisioned automatically when not using an existing VNet.
-param foundryNetworkInjectionEnabled = bool(readEnvironmentVariable('FOUNDRY_NETWORK_INJECTION_ENABLED', 'true'))
-
 // DNS Zone parameters (legacy approach - single subscription/RG)
 param dnsZoneRG = readEnvironmentVariable('DNS_ZONE_RG', '')
 param dnsSubscriptionId = readEnvironmentVariable('DNS_SUBSCRIPTION_ID', '')
@@ -201,7 +198,6 @@ param aiFoundryInstances = [
     location: 'eastus2'
     customSubDomainName: ''
     defaultProjectName: 'citadel-governance-project'
-    networkInjectionEnabled: false
   }
 ]
 

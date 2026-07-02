@@ -428,3 +428,4 @@ bicep/infra/citadel-access-contracts/contracts/sales-assistant/dev/main.biceppar
 bicep/infra/citadel-access-contracts/contracts/sales-assistant/dev/ai-product-policy.xml
 bicep/infra/citadel-access-contracts/contracts/hr-chatagent/dev/main.bicepparam
 bicep/infra/citadel-access-contracts/contracts/hr-chatagent/dev/ai-product-policy.xml
+bicep/infra/llm-backend-onboarding/llm-backends-aliases-validation.bicepparam
