@@ -1,4 +1,21 @@
-# Citadel AI Governance Hub - Hands-On Workshop Lab Guide 🏛️
+---
+lab:
+   title: Deploy and validate the Citadel AI Governance Hub hands-on lab
+   description: Deploy a governed AI hub-and-spoke architecture on Azure, run validation notebooks, and review observability data across APIM, Application Insights, and Cosmos DB.
+   duration: 3 hours
+   level: 300
+   islab: true
+   primarytopics:
+      - Azure
+      - Azure API Management
+      - Microsoft Foundry
+      - AI Governance
+      - Observability
+layout: default
+permalink: /lab/
+---
+
+# Citadel AI Governance Hub - Hands-On Lab Guide 
 
 **Duration:** ~3 hours  
 **Level:** Intermediate  
@@ -16,7 +33,7 @@ You deploy the hub with `azd up`, then deploy the sample spoke with `workshop/sc
 
 ## Table of Contents
 
-1. [Workshop Overview](#1-workshop-overview)
+1. [Lab Overview](#1-lab-overview)
 2. [Pre-Requisites](#2-pre-requisites)
 3. [Lab 1 — Deploy Citadel to Your Azure Subscription](#lab-1)
 4. [Lab 2 — Review Deployed Services and Configuration](#lab-2)
@@ -27,9 +44,9 @@ You deploy the hub with `azd up`, then deploy the sample spoke with `workshop/sc
 
 ---
 
-## 1. Workshop Overview
+## 1. Lab Overview
 
-In this hands-on workshop you will:
+In this hands-on lab you will:
 
 1. **Deploy** the Citadel Hub to your own Azure subscription using Azure Developer CLI (`azd`)
 2. **Deploy** a sample Citadel Spoke by running the `workshop/scripts/deploy-spoke-foundry.*` script after `azd up` completes
@@ -41,7 +58,7 @@ In this hands-on workshop you will:
 
 Citadel Governance Hub is an enterprise-grade AI landing zone that provides a centralized, governable, and observable control plane for AI consumption. It uses Azure API Management as a unified AI gateway with policy-driven governance, usage tracking, PII detection, content safety, and multi-model routing.
 
-### Workshop Timeline (Approximate)
+### Lab Timeline (Approximate)
 
 | Time | Activity |
 |------|----------|
@@ -57,9 +74,9 @@ Citadel Governance Hub is an enterprise-grade AI landing zone that provides a ce
 
 ## 2. Pre-Requisites
 
-Complete these steps **before** the workshop day to ensure a smooth experience.
+Complete these steps **before** the lab day to ensure a smooth experience.
 
-> ✅ **Assumed knowledge:** This workshop assumes participants have a working understanding of the Azure services used by Citadel (API Management, AI Foundry, Cosmos DB, Key Vault, Event Hub, etc.) and are comfortable using the tools listed below. You do not need to be a subject-matter expert, but Azure fundamentals are outside the scope of this workshop.
+> ✅ **Assumed knowledge:** This lab assumes participants have a working understanding of the Azure services used by Citadel (API Management, AI Foundry, Cosmos DB, Key Vault, Event Hub, etc.) and are comfortable using the tools listed below. You do not need to be a subject-matter expert, but Azure fundamentals are outside the scope of this lab.
 
 ### 2.1 Azure Requirements
 
@@ -91,7 +108,7 @@ Creating these role assignments requires `Microsoft.Authorization/roleAssignment
 
 ### 2.2 Lab Environment Requirements
 
-You can run the workshop from your local machine or from the included Devcontainer.
+You can run the lab from your local machine or from the included Devcontainer.
 
 <details open>
 <summary><strong>Option A — Local machine</strong></summary>
@@ -114,7 +131,7 @@ You can run the workshop from your local machine or from the included Devcontain
 <details>
 <summary><strong>Option B — Devcontainer</strong></summary>
 
-Use the included [Devcontainer](../.devcontainer/devcontainer.json) for a preconfigured VS Code environment with Azure CLI, Azure Developer CLI, Python 3.13, Jupyter, Bicep, Node.js, Git, and workshop dependencies.
+Use the included [Devcontainer](../.devcontainer/devcontainer.json) for a preconfigured VS Code environment with Azure CLI, Azure Developer CLI, Python 3.13, Jupyter, Bicep, Node.js, Git, and lab dependencies.
 
 1. Install [VS Code](https://code.visualstudio.com/), [Docker Desktop](https://www.docker.com/products/docker-desktop/), and the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers).
 2. Open the repository root in VS Code.
@@ -127,7 +144,7 @@ Use the included [Devcontainer](../.devcontainer/devcontainer.json) for a precon
 ### 2.3 Network Requirements
 
 - Ability to connect to the Internet and Azure services
-- You can use Wi-Fi provided by the workshop organizer or your own connectivity (e.g. if you are running this lab from home)
+- You can use Wi-Fi provided by the lab organizer or your own connectivity (e.g. if you are running this lab from home)
 
 ### 2.4 Register Azure Resource Providers
 
@@ -232,7 +249,7 @@ azd env new citadel-workshop
 <details>
 <summary><strong>Optional — configure environment settings</strong></summary>
 
-The defaults work well for the workshop. However, you may want to set the Azure region:
+The defaults work well for the lab. However, you may want to set the Azure region:
 
 ```bash
 azd env set AZURE_LOCATION swedencentral
@@ -240,7 +257,7 @@ azd env set AZURE_LOCATION swedencentral
 
 > 💡 **Tip:** Choose a region that has Azure OpenAI quota available for your subscription. Common choices: `swedencentral`, `eastus`, `eastus2`.
 
-To reduce costs during the workshop, you can optionally disable components you won't test:
+To reduce costs during the lab, you can optionally disable components you won't test:
 
 ```bash
 # Optional — disable components to speed up deployment and reduce costs
@@ -402,7 +419,7 @@ If you would like to explore the deployed models at the end of the lab:
 4. Open the related project in the Foundry portal.
 5. Go to **Build** → **Models** to view deployed models.
 
-We recommend doing this at the end of the workshop to minimize context switching.
+We recommend doing this at the end of the lab to minimize context switching.
 
 </details>
 
@@ -455,7 +472,7 @@ API Management is the core of Citadel. Explore these areas:
 
 ### 5.1 Set Up Python Environment
 
-If you are using the Devcontainer, the post-create setup installs the workshop dependencies automatically. Confirm the selected Python interpreter points to `workshop/.venv`, then continue to [Section 5.2](#52-open-notebooks-in-vs-code).
+If you are using the Devcontainer, the post-create setup installs the lab dependencies automatically. Confirm the selected Python interpreter points to `workshop/.venv`, then continue to [Section 5.2](#52-open-notebooks-in-vs-code).
 
 Navigate to the `workshop` folder in your terminal:
 
@@ -482,7 +499,7 @@ uv sync
 <details>
 <summary><strong>Option B — Using <code>pip</code></strong></summary>
 
-> ⚠️ **Important:** This workshop requires **Python 3.13 or later**. Install it from [python.org](https://www.python.org/downloads/) if you don't have it.
+> ⚠️ **Important:** This lab requires **Python 3.13 or later**. Install it from [python.org](https://www.python.org/downloads/) if you don't have it.
 
 ```bash
 # Create a virtual environment with Python 3.13
@@ -517,7 +534,7 @@ Take a moment to review how this works in the code: the notebooks use `azd env g
 
 ### 5.4 Recommended Notebook Execution Order
 
-The workshop includes a subset of validation notebooks. Execute them in this order:
+This lab includes a subset of validation notebooks. Execute them in this order:
 
 | Order | Notebook | File | Details |
 |-------|----------|------|---------|
@@ -532,7 +549,7 @@ The workshop includes a subset of validation notebooks. Execute them in this ord
 
 #### Optional Notebooks (7–9)
 
-The following three notebooks are **optional** and can be run after notebooks 1–6. They are net-new labs and do not have equivalent notebooks in the `validation/` folder. Unless noted, they share the same pre-requisites as notebooks 1–6 (deployed hub + spoke, Azure CLI login, workshop Python environment).
+The following three notebooks are **optional** and can be run after notebooks 1–6. They are net-new labs and do not have equivalent notebooks in the `validation/` folder. Unless noted, they share the same pre-requisites as notebooks 1–6 (deployed hub + spoke, Azure CLI login, lab Python environment).
 
 <details>
 <summary><strong>7. Citadel Hosted Agent with AGT</strong> — build, deploy, and govern a Foundry hosted agent</summary>
@@ -598,7 +615,7 @@ Once these scripts complete successfully, run the notebook.
 
 - ✅ **Run All is fine** — you can use **Run All** to execute the entire notebook, but review the output of each cell afterwards to understand what happened
 - 🔐 **Azure CLI auth** — ensure you are logged in with `az login` before running notebooks; this is required for notebooks to discover resources and authenticate
-- 🧹 **Cleanup** — do not clean up resources created by notebooks individually; at the end of the workshop, run `azd down --purge --force`
+- 🧹 **Cleanup** — do not clean up resources created by notebooks individually; at the end of the lab, run `azd down --purge --force`
 - 🛠️ **Errors?** — Check the [Troubleshooting](#8-troubleshooting) section
 
 ---
@@ -799,7 +816,7 @@ You can now visualize the data in Cosmos DB using the provided Power BI template
 
 ## 7. Clean Up
 
-After the workshop, remove all deployed resources to avoid ongoing costs. Perform these steps **in order** — tear down the optional MCP lab resources first, then the Citadel hub, then any spokes.
+After the lab, remove all deployed resources to avoid ongoing costs. Perform these steps **in order** — tear down the optional MCP lab resources first, then the Citadel hub, then any spokes.
 
 ### 7.1 Tear Down MCP Lab Resources (only if you ran optional notebook 9)
 
