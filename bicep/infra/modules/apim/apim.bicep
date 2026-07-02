@@ -342,6 +342,9 @@ module llmBackends './llm-backends.bicep' = {
     configureCircuitBreaker: true
     tags: tags
   }
+  dependsOn: [
+    policyFragments
+  ]
 }
 
 /**
@@ -372,6 +375,9 @@ module llmPolicyFragments './llm-policy-fragments.bicep' =  {
     managedIdentityClientId: managedIdentity.properties.clientId
     llmBackendConfig: llmBackendConfig
   }
+  dependsOn: [
+    policyFragments
+  ]
 }
 
 resource redisCache 'Microsoft.ApiManagement/service/caches@2024-06-01-preview' = if (enableRedisCache) {
@@ -447,6 +453,7 @@ module apimOpenaiApi './inference-api.bicep' = {
     llmBackends
     llmBackendPools
     llmPolicyFragments
+    apiUniversalLLM
   ]
 }
 
@@ -465,6 +472,7 @@ module apiUnifiedAI './unified-ai-api.bicep' = if (enableUnifiedAiApi) {
     llmBackends
     llmBackendPools
     llmPolicyFragments
+    apimOpenaiApi
   ]
 }
 

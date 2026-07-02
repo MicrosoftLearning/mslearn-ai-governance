@@ -16,7 +16,6 @@
       }
     }
   ],
-  "tags": [],
   "paths": {
     "/deployments": {
       "get": {

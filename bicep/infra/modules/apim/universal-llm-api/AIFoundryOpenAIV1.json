@@ -8,7 +8,6 @@
     },
     "version": "v1"
   },
-  "tags": [],
   "paths": {
     "/deployments": {
       "get": {

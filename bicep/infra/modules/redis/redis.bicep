@@ -168,6 +168,9 @@ module privateEndpoint '../networking/private-endpoint.bicep' = if (usePrivateEn
     dnsZoneResourceId: dnsZoneResourceId
     tags: tags
   }
+  dependsOn: [
+    redisDb
+  ]
 }
 
 var redisHostName = redis.properties.hostName
