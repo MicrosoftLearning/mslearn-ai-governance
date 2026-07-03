@@ -11,7 +11,7 @@ lab:
       - Microsoft Foundry
       - AI Governance
       - Observability
-layout: default
+layout: page
 permalink: /lab/
 ---
 
