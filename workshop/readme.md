@@ -74,7 +74,7 @@ Complete these steps **before** the lab day to ensure a smooth experience.
 | **Sufficient Quota** | Quota for Azure OpenAI / AI Foundry model deployments (GPT-4.1, DeepSeek-R1, etc.) in the target region |
 | **Resource Providers** | Several resource providers must be registered (see [Section 2.4](#24-register-azure-resource-providers)) |
 
-<details>
+<details markdown="1">
 <summary><strong>Why these deployment permissions are required</strong></summary>
 
 The deployment creates user-assigned managed identities for API Management and usage-processing workloads (`id-apim-*` and `id-logicapp-*` by default). It also enables system-assigned identities on services such as AI Foundry projects and the Logic App.
@@ -97,7 +97,7 @@ Creating these role assignments requires `Microsoft.Authorization/roleAssignment
 
 You can run the lab from your local machine or from the included Devcontainer.
 
-<details open>
+<details open markdown="1">
 <summary><strong>Option A — Local machine</strong></summary>
 
 | Tool | Purpose | Install Link |
@@ -115,7 +115,7 @@ You can run the lab from your local machine or from the included Devcontainer.
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>Option B — Devcontainer</strong></summary>
 
 Use the included [Devcontainer](../.devcontainer/devcontainer.json) for a preconfigured VS Code environment with Azure CLI, Azure Developer CLI, Python 3.13, Jupyter, Bicep, Node.js, Git, and lab dependencies.
@@ -192,7 +192,7 @@ cd ai-hub-gateway-solution-accelerator
 git checkout workshop
 ```
 
-<details>
+<details markdown="1">
 <summary><strong>Alternative — initialize with <code>azd init</code></strong></summary>
 
 ```bash
@@ -231,7 +231,7 @@ azd env new citadel-workshop
 
 > **This section is optional** and can be skipped for the lab. It is provided in case you want to experiment with specific settings.
 
-<details>
+<details markdown="1">
 <summary><strong>Optional — configure environment settings</strong></summary>
 
 The defaults work well for the lab. However, you may want to set the Azure region:
@@ -273,7 +273,7 @@ Then the deployment begins. **This takes approximately 30-45 minutes.**
 
 If your deployment uses the **Developer** APIM SKU (APIM_SKU="Developer"), run the APIM cleanup script immediately after `azd up` completes. The script checks the live APIM SKU and only removes the default APIM products and subscriptions when the SKU is `Developer`.
 
-<details>
+<details markdown="1">
 <summary>🪟 PowerShell</summary>
 
 ```powershell
@@ -282,7 +282,7 @@ If your deployment uses the **Developer** APIM SKU (APIM_SKU="Developer"), run t
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>💻 Bash</summary>
 
 ```bash
@@ -307,7 +307,7 @@ azd env get-values
 
 After `azd up` finishes, run the spoke deployment script from the repository root. Pass a unique spoke suffix so the script creates a distinct spoke resource group and unique resource names for the Foundry account, Key Vault, Log Analytics workspace, Application Insights, and Azure Container Registry.
 
-<details>
+<details markdown="1">
 <summary>🪟 PowerShell</summary>
 
 ```powershell
@@ -316,7 +316,7 @@ After `azd up` finishes, run the spoke deployment script from the repository roo
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>💻 Bash</summary>
 
 ```bash
@@ -327,7 +327,7 @@ After `azd up` finishes, run the spoke deployment script from the repository roo
 
 This step deploys a sample Citadel Spoke: a standalone Azure AI Foundry account and project that represent an onboarded workload (use case). For example, if the hub resource group is `rg-citadel-demo-1`, `-SpokeSuffix 1` creates a spoke resource group named `rg-citadel-demo-1-spoke-1`. To create another spoke without editing the scripts, rerun the same command with a different suffix:
 
-<details>
+<details markdown="1">
 <summary>🪟 PowerShell</summary>
 
 ```powershell
@@ -337,7 +337,7 @@ This step deploys a sample Citadel Spoke: a standalone Azure AI Foundry account 
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>💻 Bash</summary>
 
 ```bash
@@ -347,7 +347,7 @@ This step deploys a sample Citadel Spoke: a standalone Azure AI Foundry account 
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>Advanced — override generated spoke names</strong></summary>
 
 The suffix only affects generated defaults. Advanced users can still override individual names with environment variables such as `SPOKE_RESOURCE_GROUP_NAME`, `FOUNDRY_ACCOUNT_NAME`, `KEY_VAULT_NAME`, `SPOKE_LOG_ANALYTICS_NAME`, `SPOKE_APP_INSIGHTS_NAME`, and `SPOKE_ACR_NAME`.
@@ -391,7 +391,7 @@ Navigate to your resource group in the Azure Portal. You should see resources in
 
 > ℹ️ **Note:** After `azd up`, the AI Foundry resources in Citadel Hub have public network access disabled by design. Related Foundry projects are not accessible through the Foundry portal, and users will see **"Private network access required"**. This is expected.
 
-<details>
+<details markdown="1">
 <summary><strong>Optional — explore deployed models in the Foundry portal</strong></summary>
 
 If you would like to explore the deployed models at the end of the lab:
@@ -461,7 +461,7 @@ Navigate to the `workshop` folder in your terminal:
 cd workshop
 ```
 
-<details open>
+<details open markdown="1">
 <summary><strong>Option A — Using <code>uv</code> (recommended)</strong></summary>
 
 ```bash
@@ -477,7 +477,7 @@ uv sync
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>Option B — Using <code>pip</code></strong></summary>
 
 > ⚠️ **Important:** This lab requires **Python 3.13 or later**. Install it from [python.org](https://www.python.org/downloads/) if you don't have it.
@@ -532,7 +532,7 @@ This lab includes a subset of validation notebooks. Execute them in this order:
 
 The following three notebooks are **optional** and can be run after notebooks 1–6. They are net-new labs and do not have equivalent notebooks in the `validation/` folder. Unless noted, they share the same pre-requisites as notebooks 1–6 (deployed hub + spoke, Azure CLI login, lab Python environment).
 
-<details>
+<details markdown="1">
 <summary><strong>7. Citadel Hosted Agent with AGT</strong> — build, deploy, and govern a Foundry hosted agent</summary>
 
 | | |
@@ -544,7 +544,7 @@ Builds a **Foundry Hosted Agent** for a Contoso HR scenario, governed end-to-end
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>8. Publish and Use an A2A Endpoint</strong> — expose a Foundry agent as a governed Agent-to-Agent endpoint</summary>
 
 | | |
@@ -556,7 +556,7 @@ Walks through the full lifecycle of running an HR **prompt agent** on Microsoft 
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>9. Publish and Use the HR MCP via APIM</strong> — publish and consume an HR MCP server through APIM (requires setup scripts)</summary>
 
 | | |
@@ -690,7 +690,7 @@ Once you have a successful run, proceed with importing model pricing data.
 
 1. First, retrieve your Cosmos DB account name and assign the required role to your current user:
 
-   <details>
+   <details markdown="1">
    <summary>💻 Bash</summary>
 
    ```bash
@@ -710,7 +710,7 @@ Once you have a successful run, proceed with importing model pricing data.
 
    </details>
 
-   <details>
+   <details markdown="1">
    <summary>🪟 PowerShell</summary>
 
    ```powershell
@@ -730,7 +730,7 @@ Once you have a successful run, proceed with importing model pricing data.
 
 2. Run the import script to load model pricing data into Cosmos DB:
 
-   <details>
+   <details markdown="1">
    <summary>💻 Bash</summary>
 
    ```bash
@@ -743,7 +743,7 @@ Once you have a successful run, proceed with importing model pricing data.
 
    </details>
 
-   <details>
+   <details markdown="1">
    <summary>🪟 PowerShell</summary>
 
    ```powershell
@@ -784,7 +784,7 @@ Once you have a successful run, proceed with importing model pricing data.
 
 > ℹ️ **Note:** If you get a warning that the request is blocked by your Cosmos DB account firewall settings, go to your Cosmos DB resource → **Settings** → **Networking**, choose **Selected networks**, and add your current IP address.
 
-<details>
+<details markdown="1">
 <summary><strong>Optional — visualize usage data in Power BI</strong></summary>
 
 You can now visualize the data in Cosmos DB using the provided Power BI template. See the [Power BI Dashboard guide](../guides/power-bi-dashboard.md) for instructions.
@@ -801,7 +801,7 @@ After the lab, remove all deployed resources to avoid ongoing costs. Perform the
 
 If you ran optional notebook 9 (HR MCP via APIM), tear down the HR MCP resources **before** running `azd down` for the Citadel hub. The MCP deployment creates resources inside the shared hub VNet (a dedicated ACA subnet, private DNS zone link, etc.), so removing them first avoids leaving orphaned dependencies that can block hub deletion. Run the teardown script from the `workshop/` folder:
 
-<details>
+<details markdown="1">
 <summary>💻 Bash</summary>
 
 ```bash
@@ -810,7 +810,7 @@ bash ./mcp-hr/scripts/teardown-hr-mcp.sh
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>🪟 PowerShell</summary>
 
 ```powershell
@@ -854,7 +854,7 @@ Verify in the Azure Portal that the hub resource group and any spoke resource gr
 
 ### Deployment Issues
 
-<details>
+<details markdown="1">
 <summary><strong><code>azd up</code> fails with provider not registered</strong></summary>
 
 ```bash
@@ -866,7 +866,7 @@ azd up
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>Quota errors for AI model deployments</strong></summary>
 
 - Check your subscription's Azure OpenAI quota in the target region
@@ -875,7 +875,7 @@ azd up
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>APIM deployment takes very long</strong></summary>
 
 - StandardV2 APIM typically deploys in 15-25 minutes
@@ -886,7 +886,7 @@ azd up
 
 ### Notebook Issues
 
-<details>
+<details markdown="1">
 <summary><strong><code>az</code> CLI not authenticated in notebook</strong></summary>
 
 ```bash
@@ -897,7 +897,7 @@ az login
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>Module not found errors</strong></summary>
 
 ```bash
@@ -910,7 +910,7 @@ pip install -r requirements.txt
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>APIM returns 401/403 errors</strong></summary>
 
 - Verify your subscription key is correct (re-run the "Retrieve API key" cell)
@@ -919,7 +919,7 @@ pip install -r requirements.txt
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>Notebook cells fail with timeout</strong></summary>
 
 - Some operations (Bicep deployments) can take 2-5 minutes
@@ -930,7 +930,7 @@ pip install -r requirements.txt
 
 ### Observability Issues
 
-<details>
+<details markdown="1">
 <summary><strong>No data in Application Insights</strong></summary>
 
 - There is typically a 2-5 minute ingestion delay
@@ -939,7 +939,7 @@ pip install -r requirements.txt
 
 </details>
 
-<details>
+<details markdown="1">
 <summary><strong>No usage records in Cosmos DB</strong></summary>
 
 - Usage records are processed by the Logic App workflow
