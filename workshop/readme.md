@@ -31,20 +31,7 @@ You deploy the hub with `azd up`, then deploy the sample spoke with `workshop/sc
 
 ---
 
-## Table of Contents
-
-1. [Lab Overview](#1-lab-overview)
-2. [Pre-Requisites](#2-pre-requisites)
-3. [Lab 1 — Deploy Citadel to Your Azure Subscription](#lab-1)
-4. [Lab 2 — Review Deployed Services and Configuration](#lab-2)
-5. [Lab 3 — Run Validation Notebooks](#lab-3)
-6. [Lab 4 — Observability: Metrics, Logs, and Telemetry](#lab-4)
-7. [Clean Up](#7-clean-up)
-8. [Troubleshooting](#8-troubleshooting)
-
----
-
-## 1. Lab Overview
+## Lab overview
 
 In this hands-on lab you will:
 
@@ -72,13 +59,13 @@ Citadel Governance Hub is an enterprise-grade AI landing zone that provides a ce
 
 ---
 
-## 2. Pre-Requisites
+## Before you start
 
 Complete these steps **before** the lab day to ensure a smooth experience.
 
 > ✅ **Assumed knowledge:** This lab assumes participants have a working understanding of the Azure services used by Citadel (API Management, AI Foundry, Cosmos DB, Key Vault, Event Hub, etc.) and are comfortable using the tools listed below. You do not need to be a subject-matter expert, but Azure fundamentals are outside the scope of this lab.
 
-### 2.1 Azure Requirements
+### Azure Requirements
 
 | Requirement | Details |
 |-------------|---------|
@@ -106,7 +93,7 @@ Creating these role assignments requires `Microsoft.Authorization/roleAssignment
 
 </details>
 
-### 2.2 Lab Environment Requirements
+### Lab Environment Requirements
 
 You can run the lab from your local machine or from the included Devcontainer.
 
@@ -141,12 +128,12 @@ Use the included [Devcontainer](../.devcontainer/devcontainer.json) for a precon
 
 </details>
 
-### 2.3 Network Requirements
+### Network Requirements
 
 - Ability to connect to the Internet and Azure services
 - You can use Wi-Fi provided by the lab organizer or your own connectivity (e.g. if you are running this lab from home)
 
-### 2.4 Register Azure Resource Providers
+### Register Azure Resource Providers
 
 Some Azure resource providers need to be registered before deployment. Run these commands in your terminal:
 
@@ -178,7 +165,7 @@ az provider register --namespace Microsoft.Cache
 az provider list --query "[?registrationState=='Registered'].namespace" -o table
 ```
 
-### 2.5 Verify Tool Installation
+### Verify Tool Installation
 
 Run these commands to confirm all tools are installed:
 
@@ -192,14 +179,12 @@ code --version
 
 ---
 
-<a id="lab-1"></a>
-
-## 3. Lab 1 — Deploy Citadel to Your Azure Subscription
+## Deploy Citadel to your Azure subscription
 
 **Goal:** Deploy the Citadel Hub first, then deploy a sample Citadel Spoke that connects to it.  
 **Estimated time:** ~45 minutes
 
-### 3.1 Clone the Repository
+### Clone the Repository
 
 ```bash
 git clone https://github.com/mohamedsaif/ai-hub-gateway-solution-accelerator.git
@@ -217,7 +202,7 @@ azd init --template https://github.com/mohamedsaif/ai-hub-gateway-solution-accel
 
 </details>
 
-### 3.2 Authenticate to Azure
+### Authenticate to Azure
 
 ```bash
 # Login to Azure CLI
@@ -236,13 +221,13 @@ az login --tenant-id <your-tenant-id>
 azd auth login --tenant-id <your-tenant-id>
 ```
 
-### 3.3 Create a New Environment
+### Create a New Environment
 
 ```bash
 azd env new citadel-workshop
 ```
 
-### 3.4 Configure Environment (Optional)
+### Configure Environment (Optional)
 
 > **This section is optional** and can be skipped for the lab. It is provided in case you want to experiment with specific settings.
 
@@ -268,7 +253,7 @@ azd env set ENABLE_AZURE_AI_SEARCH false
 
 </details>
 
-### 3.5 Deploy
+### Deploy
 
 > **Recommended region:** For this lab, **Sweden Central** (`swedencentral`) is the recommended region.
 
@@ -306,7 +291,7 @@ If your deployment uses the **Developer** APIM SKU (APIM_SKU="Developer"), run t
 
 </details>
 
-### 3.6 Verify Deployment
+### Verify Deployment
 
 Once `azd up` completes:
 
@@ -318,7 +303,7 @@ Once `azd up` completes:
 azd env get-values
 ```
 
-### 3.7 Deploy the Sample Spoke
+### Deploy the Sample Spoke
 
 After `azd up` finishes, run the spoke deployment script from the repository root. Pass a unique spoke suffix so the script creates a distinct spoke resource group and unique resource names for the Foundry account, Key Vault, Log Analytics workspace, Application Insights, and Azure Container Registry.
 
@@ -369,7 +354,7 @@ The suffix only affects generated defaults. Advanced users can still override in
 
 </details>
 
-### 3.8 Verify Deployment
+### Verify Deployment
 
 Once the script completes, there is no need to note down any values — the notebooks read directly from `azd env` variables at runtime.
 
@@ -380,14 +365,12 @@ You can verify in the Azure Portal:
 
 ---
 
-<a id="lab-2"></a>
-
-## 4. Lab 2 — Review Deployed Services and Configuration
+## Review deployed services and configuration
 
 **Goal:** Understand the services Citadel deploys and how they are configured.  
 **Estimated time:** ~30 minutes
 
-### 4.1 Resource Group Overview
+### Resource Group Overview
 
 Navigate to your resource group in the Azure Portal. You should see resources including:
 
@@ -404,7 +387,7 @@ Navigate to your resource group in the Azure Portal. You should see resources in
 | Virtual Network | `vnet-*` | Network isolation and private endpoints |
 | Managed Identity | `id-*` | Service-to-service authentication (zero credentials) |
 
-### 4.2 Explore AI Foundry
+### Explore AI Foundry
 
 > ℹ️ **Note:** After `azd up`, the AI Foundry resources in Citadel Hub have public network access disabled by design. Related Foundry projects are not accessible through the Foundry portal, and users will see **"Private network access required"**. This is expected.
 
@@ -423,7 +406,7 @@ We recommend doing this at the end of the lab to minimize context switching.
 
 </details>
 
-### 4.3 Explore API Management
+### Explore API Management
 
 API Management is the core of Citadel. Explore these areas:
 
@@ -451,7 +434,7 @@ API Management is the core of Citadel. Explore these areas:
 2. Note the circuit breaker configuration on LLM backends (not all backends have circuit breakers — only the LLM-related ones)
 3. Go to **Load balancer** — see how backends are grouped into pools for load distribution
 
-### 4.4 Explore Supporting Services
+### Explore Supporting Services
 
 **Cosmos DB:**
 1. Go to **Settings** → **Networking** and enable **Selected networks**. Under the Firewall option, add your current IP address and/or accept connections from within public Azure datacenters.
@@ -463,14 +446,12 @@ API Management is the core of Citadel. Explore these areas:
 
 ---
 
-<a id="lab-3"></a>
-
-## 5. Lab 3 — Run Validation Notebooks
+## Run validation notebooks
 
 **Goal:** Exercise Citadel's capabilities by running validation notebooks.  
 **Estimated time:** ~60 minutes
 
-### 5.1 Set Up Python Environment
+### Set Up Python Environment
 
 If you are using the Devcontainer, the post-create setup installs the lab dependencies automatically. Confirm the selected Python interpreter points to `workshop/.venv`, then continue to [Section 5.2](#52-open-notebooks-in-vs-code).
 
@@ -520,19 +501,19 @@ pip install -r requirements.txt
 
 </details>
 
-### 5.2 Open Notebooks in VS Code
+### Open Notebooks in VS Code
 
 1. Open the `workshop` folder in VS Code
 2. Open a notebook file (`.ipynb`) - see **5.4 Recommended Notebook Execution Order**
 3. Select the Python kernel from your virtual environment (`.venv` or `uv` managed). In the Devcontainer, use the preconfigured `workshop/.venv` interpreter.
 
-### 5.3 Configure Notebook Variables
+### Configure Notebook Variables
 
 All required variables (resource group name, Azure region, APIM endpoint, etc.) are **automatically configured** in the notebooks. The initialization cell (Step 0) in each notebook retrieves these values from your `azd` environment and Azure resource metadata at runtime — you do not need to manually set anything.
 
 Take a moment to review how this works in the code: the notebooks use `azd env get-values` and Azure CLI commands to discover resource names and endpoints, then inject them as Python variables used throughout the notebook.
 
-### 5.4 Recommended Notebook Execution Order
+### Recommended Notebook Execution Order
 
 This lab includes a subset of validation notebooks. Execute them in this order:
 
@@ -611,7 +592,7 @@ Once these scripts complete successfully, run the notebook.
 
 </details>
 
-### 5.5 Running Notebooks — Tips
+### Running Notebooks — Tips
 
 - ✅ **Run All is fine** — you can use **Run All** to execute the entire notebook, but review the output of each cell afterwards to understand what happened
 - 🔐 **Azure CLI auth** — ensure you are logged in with `az login` before running notebooks; this is required for notebooks to discover resources and authenticate
@@ -620,14 +601,12 @@ Once these scripts complete successfully, run the notebook.
 
 ---
 
-<a id="lab-4"></a>
-
-## 6. Lab 4 — Observability: Metrics, Logs, and Telemetry
+## Observability: Metrics, logs, and telemetry
 
 **Goal:** After running notebooks, explore the telemetry and usage data generated by your API calls.  
 **Estimated time:** ~30 minutes
 
-### 6.1 API Management — Built-in Analytics
+### API Management — Built-in Analytics
 
 1. Navigate to your **API Management** resource
 
@@ -681,7 +660,7 @@ Once these scripts complete successfully, run the notebook.
    | render columnchart
    ```
 
-### 6.2 Application Insights — APIM Telemetry
+### Application Insights — APIM Telemetry
 
 From your APIM resource, click the **Application Insights** option in the sidebar to navigate directly to the associated Application Insights resource.
 
@@ -694,7 +673,7 @@ From your APIM resource, click the **Application Insights** option in the sideba
    - Filter by time range covering your notebook runs
    - Click on a request to see full end-to-end trace (request → APIM policy execution → backend call → response)
 
-### 6.3 Cosmos DB — Usage Records
+### Cosmos DB — Usage Records
 
 **Populate data first:** Before querying Cosmos DB, you need to run the Logic App workflow that ingests usage data from Application Insights into Cosmos DB:
 
@@ -814,11 +793,11 @@ You can now visualize the data in Cosmos DB using the provided Power BI template
 
 ---
 
-## 7. Clean Up
+## Clean up
 
 After the lab, remove all deployed resources to avoid ongoing costs. Perform these steps **in order** — tear down the optional MCP lab resources first, then the Citadel hub, then any spokes.
 
-### 7.1 Tear Down MCP Lab Resources (only if you ran optional notebook 9)
+### Tear Down MCP Lab Resources (only if you ran optional notebook 9)
 
 If you ran optional notebook 9 (HR MCP via APIM), tear down the HR MCP resources **before** running `azd down` for the Citadel hub. The MCP deployment creates resources inside the shared hub VNet (a dedicated ACA subnet, private DNS zone link, etc.), so removing them first avoids leaving orphaned dependencies that can block hub deletion. Run the teardown script from the `workshop/` folder:
 
@@ -844,7 +823,7 @@ The teardown is best-effort and idempotent — resources that are already gone a
 
 > ⏭️ **Skip this step** if you did not run notebook 9.
 
-### 7.2 Tear Down the Citadel Hub (`azd down`)
+### Tear Down the Citadel Hub (`azd down`)
 
 Remove the hub resources that were deployed via `azd up`:
 
@@ -857,7 +836,7 @@ azd down --purge --force
 
 > ⚠️ **Important:** The `--purge` flag ensures soft-deleted resources (Key Vault, Cognitive Services) are permanently removed. The `--force` flag skips confirmation prompts.
 
-### 7.3 Tear Down the Spoke(s) (via Azure Portal)
+### Tear Down the Spoke(s) (via Azure Portal)
 
 `azd down` only removes the hub resources that were deployed via `azd up`. You must also manually delete any **spoke resource groups** in the Azure Portal because they were deployed separately by script.
 
@@ -865,13 +844,13 @@ azd down --purge --force
 2. Locate each spoke resource group (e.g. `rg-citadel-demo-1-spoke-1`)
 3. Delete the resource group
 
-### 7.4 Verify Cleanup
+### Verify Cleanup
 
 Verify in the Azure Portal that the hub resource group and any spoke resource groups have been deleted.
 
 ---
 
-## 8. Troubleshooting
+## Troubleshooting
 
 ### Deployment Issues
 
