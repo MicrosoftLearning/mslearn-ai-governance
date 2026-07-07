@@ -31,6 +31,69 @@ You deploy the hub with `azd up`, then deploy the sample spoke with `workshop/sc
 
 ---
 
+## Choose your duration
+
+Pick how far you want to go. Every path starts with the same setup and deployment — the difference is how many notebooks you run and how deep you go into observability. **Click a path below** to jump to its step-by-step checklist.
+
+<div style="display:flex; flex-wrap:wrap; gap:16px; margin:24px 0;">
+
+  <a href="#path-express" style="flex:1 1 240px; text-decoration:none; color:#222; border:2px solid #2ea043; border-top:8px solid #2ea043; border-radius:12px; padding:20px; background:#f2fbf4; box-shadow:0 2px 8px rgba(0,0,0,0.12); display:block;">
+    <div style="font-size:26px; font-weight:800; color:#1a7f37;">⚡ Express</div>
+    <div style="font-size:22px; font-weight:800; margin:6px 0; color:#222;">~1.5 hours</div>
+    <div style="font-size:14px; color:#444;">Setup + deploy + 1–2 notebooks + a quick look at metrics. The fastest way to see Citadel working end to end.</div>
+  </a>
+
+  <a href="#path-standard" style="flex:1 1 240px; text-decoration:none; color:#222; border:2px solid #1f6feb; border-top:8px solid #1f6feb; border-radius:12px; padding:20px; background:#f1f6fe; box-shadow:0 2px 8px rgba(0,0,0,0.12); display:block;">
+    <div style="font-size:26px; font-weight:800; color:#0969da;">⚖️ Standard</div>
+    <div style="font-size:22px; font-weight:800; margin:6px 0; color:#222;">~2.5–3 hours</div>
+    <div style="font-size:14px; color:#444;">The full guided lab: setup, deploy, review services, run notebooks 1–6, and explore observability.</div>
+  </a>
+
+  <a href="#path-complete" style="flex:1 1 240px; text-decoration:none; color:#222; border:2px solid #a371f7; border-top:8px solid #a371f7; border-radius:12px; padding:20px; background:#f8f4fe; box-shadow:0 2px 8px rgba(0,0,0,0.12); display:block;">
+    <div style="font-size:26px; font-weight:800; color:#8250df;">🚀 Complete</div>
+    <div style="font-size:22px; font-weight:800; margin:6px 0; color:#222;">~4–4.5 hours</div>
+    <div style="font-size:14px; color:#444;">Everything in Standard plus the optional agent, A2A, and MCP notebooks (7–9) and full usage analytics.</div>
+  </a>
+
+</div>
+
+> ⏳ **Deployment dominates the clock.** `azd up` takes ~30–45 minutes on every path. Read ahead through the review and notebook sections while it runs so no path feels slower than it needs to.
+
+<h3 id="path-express">⚡ Express — ~1.5 hours</h3>
+
+| Step | Section | Time |
+|------|---------|------|
+| 1 | [Before you start](#before-you-start) — verify tools, register providers | ~15 min |
+| 2 | [Deploy Citadel](#deploy-citadel-to-your-azure-subscription) — `azd up` + spoke script | ~45 min |
+| 3 | [Run notebooks](#run-validation-notebooks) — **notebooks 1 and 2 only** | ~15 min |
+| 4 | [Observability](#observability-metrics-logs-and-telemetry) — APIM **Analytics** + **Metrics** only | ~15 min |
+| | **Total** | **~1.5 hours** |
+
+<h3 id="path-standard">⚖️ Standard — ~2.5–3 hours</h3>
+
+| Step | Section | Time |
+|------|---------|------|
+| 1 | [Before you start](#before-you-start) — verify tools, register providers | ~15 min |
+| 2 | [Deploy Citadel](#deploy-citadel-to-your-azure-subscription) — `azd up` + spoke script | ~45 min |
+| 3 | [Review deployed services](#review-deployed-services-and-configuration) — APIM, backends, policies | ~30 min |
+| 4 | [Run notebooks](#run-validation-notebooks) — **notebooks 1–6** | ~60 min |
+| 5 | [Observability](#observability-metrics-logs-and-telemetry) — APIM, App Insights, Cosmos DB | ~30 min |
+| | **Total** | **~2.5–3 hours** |
+
+<h3 id="path-complete">🚀 Complete — ~4–4.5 hours</h3>
+
+| Step | Section | Time |
+|------|---------|------|
+| 1 | [Before you start](#before-you-start) — verify tools, register providers | ~15 min |
+| 2 | [Deploy Citadel](#deploy-citadel-to-your-azure-subscription) — `azd up` + spoke script | ~45 min |
+| 3 | [Review deployed services](#review-deployed-services-and-configuration) — APIM, backends, policies | ~30 min |
+| 4 | [Run notebooks](#run-validation-notebooks) — **notebooks 1–6** | ~60 min |
+| 5 | [Run optional notebooks](#optional-notebooks-79) — **notebooks 7–9** (hosted agent, A2A, MCP) | ~75–90 min |
+| 6 | [Observability](#observability-metrics-logs-and-telemetry) — full telemetry + usage records + Power BI | ~30 min |
+| | **Total** | **~4–4.5 hours** |
+
+---
+
 ## Lab overview
 
 In this hands-on lab you will:
@@ -56,6 +119,8 @@ Citadel Governance Hub is an enterprise-grade AI landing zone that provides a ce
 | 2:30 – 3:00 | **Lab 4** — Explore observability and telemetry |
 
 > ℹ️ **Note:** Deployment takes 30-45 minutes. Use that time to read through Lab 2 and Lab 3 so you are ready when deployment completes.
+
+> 📚 **While you wait:** Work through the companion Microsoft Learn module [Govern AI at scale](https://review.learn.microsoft.com/en-us//training/modules/govern-ai-scale/?branch=pr-en-us-55503) to build the conceptual background behind Citadel. *(Preview link — sign-in required; it will be replaced by a public link later.)*
 
 ---
 
@@ -267,7 +332,7 @@ The CLI will prompt you to:
 
 Then the deployment begins. **This takes approximately 30-45 minutes.**
 
-> ⏳ **While waiting:** Read ahead through Lab 2 and Lab 3 to familiarize yourself with the deployed services and validation notebooks.
+> ⏳ **While waiting:** Read ahead through Lab 2 and Lab 3 to familiarize yourself with the deployed services and validation notebooks. You can also work through the companion Microsoft Learn module [Govern AI at scale](https://review.learn.microsoft.com/en-us//training/modules/govern-ai-scale/?branch=pr-en-us-55503). *(Preview link — sign-in required; it will be replaced by a public link later.)*
 
 > 🔁 **Transient errors:** Deployment of some resources, such as model deployments, may occasionally fail with a transient error. If `azd up` fails, re-run the command — it will pick up where it left off.
 
