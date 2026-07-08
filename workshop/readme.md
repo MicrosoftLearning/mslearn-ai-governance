@@ -17,7 +17,7 @@ permalink: /lab/
 
 # Citadel AI Governance Hub - Hands-On Lab Guide 
 
-**Duration:** ~3 hours  
+**Duration:** 3 hours  
 **Level:** Intermediate  
 **Last updated:** June 2026
 
@@ -31,66 +31,72 @@ You deploy the hub with `azd up`, then deploy the sample spoke with `workshop/sc
 
 ---
 
-## Choose your duration
+## Lab at a glance
 
-Pick how far you want to go. Every path starts with the same setup and deployment — the difference is how many notebooks you run and how deep you go into observability. **Click a path below** to jump to its step-by-step checklist.
+Complete the **Core** rows first (about **1.5 hours**) — setup, deployment, a couple of notebooks, and a first look at the metrics get you a working, governed AI gateway end to end. From there, expand into the **Standard** rows and the **Optional** notebooks as time allows. The full lab, including all optional notebooks, takes about **4.5 hours**. Use the buttons below to auto-expand the optional notebooks that match the time you have.
 
-<div style="display:flex; flex-wrap:wrap; gap:16px; margin:24px 0;">
+| Section | Task | Difficulty | Time |
+| --- | --- | --- | --- |
+| **Core** | Prerequisites — tools, quota, resource providers | ★☆☆ | 15 min |
+| **Core** | Deploy Citadel — `azd up` + spoke script | ★★☆ | 45 min |
+| **Core** | Run notebooks 1–2 — backend onboarding + Universal LLM API | ★★☆ | 15 min |
+| **Core** | Observability — APIM Analytics + Metrics | ★☆☆ | 15 min |
+| *Standard* | Review deployed services — APIM, backends, policies | ★★☆ | 30 min |
+| *Standard* | Run notebooks 3–6 — access contracts, agents, PII, unified API | ★★☆ | 45 min |
+| *Standard* | Observability — App Insights + Cosmos DB usage records | ★★☆ | 15 min |
+| *Optional* | Notebook 7 — hosted agent with AGT | ★★★ | 30 min |
+| *Optional* | Notebook 8 — publish and use an A2A endpoint | ★★★ | 25 min |
+| *Optional* | Notebook 9 — publish and use the HR MCP via APIM | ★★★ | 35 min |
 
-  <a href="#path-express" style="flex:1 1 240px; text-decoration:none; color:#222; border:2px solid #2ea043; border-top:8px solid #2ea043; border-radius:12px; padding:20px; background:#f2fbf4; box-shadow:0 2px 8px rgba(0,0,0,0.12); display:block;">
-    <div style="font-size:26px; font-weight:800; color:#1a7f37;">⚡ Express</div>
-    <div style="font-size:22px; font-weight:800; margin:6px 0; color:#222;">~1.5 hours</div>
-    <div style="font-size:14px; color:#444;">Setup + deploy + 1–2 notebooks + a quick look at metrics. The fastest way to see Citadel working end to end.</div>
-  </a>
+<div class="lab-length-picker" role="group" aria-label="Choose your lab length">
+  <span class="lab-length-label">Choose your duration:</span>
+  <button type="button" class="lab-btn is-active" data-tier="1">Core · 1.5 hrs</button>
+  <button type="button" class="lab-btn" data-tier="2">Core + Standard · 3 hrs</button>
+  <button type="button" class="lab-btn" data-tier="3">Everything · 4.5 hrs</button>
+</div>
 
-  <a href="#path-standard" style="flex:1 1 240px; text-decoration:none; color:#222; border:2px solid #1f6feb; border-top:8px solid #1f6feb; border-radius:12px; padding:20px; background:#f1f6fe; box-shadow:0 2px 8px rgba(0,0,0,0.12); display:block;">
-    <div style="font-size:26px; font-weight:800; color:#0969da;">⚖️ Standard</div>
-    <div style="font-size:22px; font-weight:800; margin:6px 0; color:#222;">~2.5–3 hours</div>
-    <div style="font-size:14px; color:#444;">The full guided lab: setup, deploy, review services, run notebooks 1–6, and explore observability.</div>
-  </a>
+<div class="lab-length-fallback" markdown="1">
 
-  <a href="#path-complete" style="flex:1 1 240px; text-decoration:none; color:#222; border:2px solid #a371f7; border-top:8px solid #a371f7; border-radius:12px; padding:20px; background:#f8f4fe; box-shadow:0 2px 8px rgba(0,0,0,0.12); display:block;">
-    <div style="font-size:26px; font-weight:800; color:#8250df;">🚀 Complete</div>
-    <div style="font-size:22px; font-weight:800; margin:6px 0; color:#222;">~4–4.5 hours</div>
-    <div style="font-size:14px; color:#444;">Everything in Standard plus the optional agent, A2A, and MCP notebooks (7–9) and full usage analytics.</div>
-  </a>
+**Choosing your duration** (the buttons above need JavaScript, which isn't run in GitHub's file preview) — do the work that fits the time you have:
+
+- **Core (1.5 hrs):** do the **Core** rows only — setup, deploy, notebooks 1–2, and a quick look at APIM metrics.
+- **Core + Standard (3 hrs):** also review the deployed services, run notebooks 3–6, and explore App Insights + Cosmos DB.
+- **Everything (4.5 hrs):** also expand and run the optional notebooks 7–9.
 
 </div>
 
-> ⏳ **Deployment dominates the clock.** `azd up` takes ~30–45 minutes on every path. Read ahead through the review and notebook sections while it runs so no path feels slower than it needs to.
+> ⏳ **Deployment dominates the clock.** `azd up` takes 30–45 minutes on every path. Read ahead through the review and notebook sections while it runs.
 
-<h3 id="path-express">⚡ Express — ~1.5 hours</h3>
+<style>
+.lab-length-picker { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:1rem 0; }
+.lab-length-label { font-weight:600; }
+.lab-btn { cursor:pointer; padding:.4rem .8rem; border:1px solid #8888; border-radius:6px; background:#f3f3f3; color:#111; font:inherit; }
+.lab-btn:hover { background:#e6e6e6; }
+.lab-btn.is-active { background:#0969da; color:#fff; border-color:#0969da; }
+details.opt-task.is-included { border-left:3px solid #0969da; padding-left:.6rem; }
+details.opt-task.is-included > summary { font-weight:600; }
+</style>
 
-| Step | Section | Time |
-|------|---------|------|
-| 1 | [Before you start](#before-you-start) — verify tools, register providers | ~15 min |
-| 2 | [Deploy Citadel](#deploy-citadel-to-your-azure-subscription) — `azd up` + spoke script | ~45 min |
-| 3 | [Run notebooks](#run-validation-notebooks) — **notebooks 1 and 2 only** | ~15 min |
-| 4 | [Observability](#observability-metrics-logs-and-telemetry) — APIM **Analytics** + **Metrics** only | ~15 min |
-| | **Total** | **~1.5 hours** |
-
-<h3 id="path-standard">⚖️ Standard — ~2.5–3 hours</h3>
-
-| Step | Section | Time |
-|------|---------|------|
-| 1 | [Before you start](#before-you-start) — verify tools, register providers | ~15 min |
-| 2 | [Deploy Citadel](#deploy-citadel-to-your-azure-subscription) — `azd up` + spoke script | ~45 min |
-| 3 | [Review deployed services](#review-deployed-services-and-configuration) — APIM, backends, policies | ~30 min |
-| 4 | [Run notebooks](#run-validation-notebooks) — **notebooks 1–6** | ~60 min |
-| 5 | [Observability](#observability-metrics-logs-and-telemetry) — APIM, App Insights, Cosmos DB | ~30 min |
-| | **Total** | **~2.5–3 hours** |
-
-<h3 id="path-complete">🚀 Complete — ~4–4.5 hours</h3>
-
-| Step | Section | Time |
-|------|---------|------|
-| 1 | [Before you start](#before-you-start) — verify tools, register providers | ~15 min |
-| 2 | [Deploy Citadel](#deploy-citadel-to-your-azure-subscription) — `azd up` + spoke script | ~45 min |
-| 3 | [Review deployed services](#review-deployed-services-and-configuration) — APIM, backends, policies | ~30 min |
-| 4 | [Run notebooks](#run-validation-notebooks) — **notebooks 1–6** | ~60 min |
-| 5 | [Run optional notebooks](#optional-notebooks-79) — **notebooks 7–9** (hosted agent, A2A, MCP) | ~75–90 min |
-| 6 | [Observability](#observability-metrics-logs-and-telemetry) — full telemetry + usage records + Power BI | ~30 min |
-| | **Total** | **~4–4.5 hours** |
+<script>
+(function () {
+  function applyTier(tier) {
+    document.querySelectorAll('.lab-btn').forEach(function (b) {
+      b.classList.toggle('is-active', Number(b.dataset.tier) === tier);
+    });
+    document.querySelectorAll('details.opt-task').forEach(function (d) {
+      var included = tier >= Number(d.dataset.tier);
+      d.open = included;
+      d.classList.toggle('is-included', included);
+    });
+  }
+  document.querySelectorAll('.lab-btn').forEach(function (b) {
+    b.addEventListener('click', function () { applyTier(Number(b.dataset.tier)); });
+  });
+  var fallback = document.querySelector('.lab-length-fallback');
+  if (fallback) { fallback.hidden = true; }
+  applyTier(1);
+})();
+</script>
 
 ---
 
@@ -108,146 +114,29 @@ In this hands-on lab you will:
 
 Citadel Governance Hub is an enterprise-grade AI landing zone that provides a centralized, governable, and observable control plane for AI consumption. It uses Azure API Management as a unified AI gateway with policy-driven governance, usage tracking, PII detection, content safety, and multi-model routing.
 
-### Lab Timeline (Approximate)
-
-| Time | Activity |
-|------|----------|
-| 0:00 – 0:15 | Verify pre-requisites, environment setup |
-| 0:15 – 1:00 | **Lab 1** — Deploy Citadel Hub (`azd up`) + Spoke (script) |
-| 1:00 – 1:30 | **Lab 2** — Review deployed services in Azure Portal |
-| 1:30 – 2:30 | **Lab 3** — Run validation notebooks |
-| 2:30 – 3:00 | **Lab 4** — Explore observability and telemetry |
-
 > ℹ️ **Note:** Deployment takes 30-45 minutes. Use that time to read through Lab 2 and Lab 3 so you are ready when deployment completes.
 
 > 📚 **While you wait:** Work through the companion Microsoft Learn module [Govern AI at scale](https://review.learn.microsoft.com/en-us//training/modules/govern-ai-scale/?branch=pr-en-us-55503) to build the conceptual background behind Citadel. *(Preview link — sign-in required; it will be replaced by a public link later.)*
 
 ---
 
-## Before you start
+## Prerequisites
 
-Complete these steps **before** the lab day to ensure a smooth experience.
+Complete these steps **before** the lab day. Before you begin, ensure you have:
 
-> ✅ **Assumed knowledge:** This lab assumes participants have a working understanding of the Azure services used by Citadel (API Management, AI Foundry, Cosmos DB, Key Vault, Event Hub, etc.) and are comfortable using the tools listed below. You do not need to be a subject-matter expert, but Azure fundamentals are outside the scope of this lab.
+- An **Azure subscription** with **Owner** (or **Contributor** plus **User Access Administrator**) permissions — `azd up` creates managed identities and assigns RBAC roles.
+- Sufficient **Azure OpenAI / AI Foundry model quota** (GPT-4.1, DeepSeek-R1, etc.) in your target region.
+- The lab tools installed — **Azure CLI**, **Azure Developer CLI** (`azd`), **Python 3.13+**, **Git**, and **VS Code** — or the included **Devcontainer**.
+- Basic familiarity with the Azure services Citadel uses (API Management, AI Foundry, Cosmos DB, Key Vault, Event Hub) and with running Jupyter notebooks.
 
-### Azure Requirements
-
-| Requirement | Details |
-|-------------|---------|
-| **Azure Subscription** | You need an Azure subscription where you can deploy resources at subscription scope |
-| **Deployment Permissions** | Use **Owner** permissions, or **Contributor** plus **User Access Administrator**, because `azd up` creates managed identities and assigns RBAC roles |
-| **Sufficient Quota** | Quota for Azure OpenAI / AI Foundry model deployments (GPT-4.1, DeepSeek-R1, etc.) in the target region |
-| **Resource Providers** | Several resource providers must be registered (see [Section 2.4](#24-register-azure-resource-providers)) |
-
-<details markdown="1">
-<summary><strong>Why these deployment permissions are required</strong></summary>
-
-The deployment creates user-assigned managed identities for API Management and usage-processing workloads (`id-apim-*` and `id-logicapp-*` by default). It also enables system-assigned identities on services such as AI Foundry projects and the Logic App.
-
-During `azd up`, Bicep assigns roles to these identities, including:
-
-- **Cognitive Services User** and **Cognitive Services OpenAI User** for the APIM managed identity.
-- **Azure Event Hubs Data Sender** for the APIM managed identity.
-- **Azure Event Hubs Data Owner** and **Monitoring Reader** for the usage-processing Logic App identity.
-- **Cosmos DB Built-in Data Contributor** on the Cosmos DB SQL account for usage ingestion.
-- **Key Vault Secrets User** for APIM and AI Foundry identities.
-- **Key Vault Certificates Officer** for AI Foundry identities.
-- **Azure AI Project Manager** for the deployer on AI Foundry resources.
-
-Creating these role assignments requires `Microsoft.Authorization/roleAssignments/write`, which is included in **Owner** or **User Access Administrator**.
-
-</details>
-
-### Lab Environment Requirements
-
-You can run the lab from your local machine or from the included Devcontainer.
-
-<details open markdown="1">
-<summary><strong>Option A — Local machine</strong></summary>
-
-| Tool | Purpose | Install Link |
-|------|---------|-------------|
-| **Azure CLI** (`az`) | Authenticate and manage Azure resources | [Install Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) |
-| **Azure Developer CLI** (`azd`) | Deploy Citadel infrastructure | [Install azd](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) |
-| **Python 3.13+** | Run validation notebooks | [python.org](https://www.python.org/downloads/) |
-| **VS Code** | Code editor and notebook runner | [code.visualstudio.com](https://code.visualstudio.com/) |
-| **Git** | Clone the repository | [git-scm.com](https://git-scm.com/downloads) |
-
-**VS Code Extensions (recommended):**
-- Python
-- Jupyter
-- Bicep
-
-</details>
-
-<details markdown="1">
-<summary><strong>Option B — Devcontainer</strong></summary>
-
-Use the included [Devcontainer](../.devcontainer/devcontainer.json) for a preconfigured VS Code environment with Azure CLI, Azure Developer CLI, Python 3.13, Jupyter, Bicep, Node.js, Git, and lab dependencies.
-
-1. Install [VS Code](https://code.visualstudio.com/), [Docker Desktop](https://www.docker.com/products/docker-desktop/), and the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers).
-2. Open the repository root in VS Code.
-3. Start Docker Desktop and wait until Docker is running.
-4. Choose **Reopen in Container** when prompted, or run **Dev Containers: Reopen in Container** from the command palette.
-5. After the container starts, run `az login` and `azd auth login` before provisioning or running notebooks.
-
-</details>
-
-### Network Requirements
-
-- Ability to connect to the Internet and Azure services
-- You can use Wi-Fi provided by the lab organizer or your own connectivity (e.g. if you are running this lab from home)
-
-### Register Azure Resource Providers
-
-Some Azure resource providers need to be registered before deployment. Run these commands in your terminal:
-
-```bash
-# Login to Azure
-az login
-
-# Select your subscription
-az account set --subscription "<your-subscription-name-or-id>"
-
-# Register required resource providers
-az provider register --namespace Microsoft.AlertsManagement
-az provider register --namespace Microsoft.ApiManagement
-az provider register --namespace Microsoft.CognitiveServices
-az provider register --namespace Microsoft.DocumentDB
-az provider register --namespace Microsoft.EventHub
-az provider register --namespace Microsoft.Insights
-az provider register --namespace Microsoft.KeyVault
-az provider register --namespace Microsoft.MachineLearningServices
-az provider register --namespace Microsoft.ManagedIdentity
-az provider register --namespace Microsoft.Network
-az provider register --namespace Microsoft.OperationalInsights
-az provider register --namespace Microsoft.Storage
-az provider register --namespace Microsoft.Web
-az provider register --namespace Microsoft.Logic
-az provider register --namespace Microsoft.Cache
-
-# Verify registration (may take a few minutes to complete)
-az provider list --query "[?registrationState=='Registered'].namespace" -o table
-```
-
-### Verify Tool Installation
-
-Run these commands to confirm all tools are installed:
-
-```bash
-az --version
-azd version
-python --version
-git --version
-code --version
-```
+> **Note:** Detailed install links, the required **Azure resource-provider registration**, the permission rationale, and the Devcontainer option are in the [Lab setup guide](lab-setup.md). Complete those steps before you begin.
 
 ---
 
 ## Deploy Citadel to your Azure subscription
 
 **Goal:** Deploy the Citadel Hub first, then deploy a sample Citadel Spoke that connects to it.  
-**Estimated time:** ~45 minutes
+**Estimated time:** 45 minutes
 
 ### Clone the Repository
 
@@ -433,7 +322,7 @@ You can verify in the Azure Portal:
 ## Review deployed services and configuration
 
 **Goal:** Understand the services Citadel deploys and how they are configured.  
-**Estimated time:** ~30 minutes
+**Estimated time:** 30 minutes
 
 ### Resource Group Overview
 
@@ -514,7 +403,7 @@ API Management is the core of Citadel. Explore these areas:
 ## Run validation notebooks
 
 **Goal:** Exercise Citadel's capabilities by running validation notebooks.  
-**Estimated time:** ~60 minutes
+**Estimated time:** 60 minutes
 
 ### Set Up Python Environment
 
@@ -597,7 +486,7 @@ This lab includes a subset of validation notebooks. Execute them in this order:
 
 The following three notebooks are **optional** and can be run after notebooks 1–6. They are net-new labs and do not have equivalent notebooks in the `validation/` folder. Unless noted, they share the same pre-requisites as notebooks 1–6 (deployed hub + spoke, Azure CLI login, lab Python environment).
 
-<details markdown="1">
+<details markdown="1" class="opt-task" data-tier="3">
 <summary><strong>7. Citadel Hosted Agent with AGT</strong> — build, deploy, and govern a Foundry hosted agent</summary>
 
 | | |
@@ -609,7 +498,7 @@ Builds a **Foundry Hosted Agent** for a Contoso HR scenario, governed end-to-end
 
 </details>
 
-<details markdown="1">
+<details markdown="1" class="opt-task" data-tier="3">
 <summary><strong>8. Publish and Use an A2A Endpoint</strong> — expose a Foundry agent as a governed Agent-to-Agent endpoint</summary>
 
 | | |
@@ -621,7 +510,7 @@ Walks through the full lifecycle of running an HR **prompt agent** on Microsoft 
 
 </details>
 
-<details markdown="1">
+<details markdown="1" class="opt-task" data-tier="3">
 <summary><strong>9. Publish and Use the HR MCP via APIM</strong> — publish and consume an HR MCP server through APIM (requires setup scripts)</summary>
 
 | | |
@@ -669,7 +558,7 @@ Once these scripts complete successfully, run the notebook.
 ## Observability: Metrics, logs, and telemetry
 
 **Goal:** After running notebooks, explore the telemetry and usage data generated by your API calls.  
-**Estimated time:** ~30 minutes
+**Estimated time:** 30 minutes
 
 ### API Management — Built-in Analytics
 
